@@ -3,7 +3,8 @@ import time
 import numpy as np
 import pandas as pd
 
-from src.models import HLSTM, MovingAverage, Model
+from src.models import HLSTM, MovingAverage, Model, ARMA, VARMA, SARIMAX, AdaptiveRandomForest, HoeffdingAdaptiveTreePerceptron
+from src.models import iSOUP
 from src.utils import split_sets, normalize
 
 
@@ -18,8 +19,23 @@ class Forecasting:
         path_to_load_model: str | None = None,
     ):
         self.resources = resources
-        sequence = sequence[self.resources]
         self.normalization_params = {}
+
+        if model_name in ["arf","hat_perceptron", "isoup", "sarimax", "arma", "varma"]:
+            if model_name in ["arma", "varma"]:
+                for res in self.resources:
+                    self.normalization_params[res] = (0.0, 1.0)
+                    
+            self.train_sequence = None
+            self.test_sequence = None
+            
+            # Inicializa o modelo imediatamente e encerra o __init__
+            self.model = self.__get_model(
+                model_name, path_to_save_weights, path_to_load_model
+            )
+            return
+
+        sequence = sequence[self.resources].copy()
         if use_normalization:
             for resource in self.resources:
                 sequence[resource], s_min, s_max = normalize(sequence[resource])
@@ -47,9 +63,34 @@ class Forecasting:
                 )
                 if path_to_load_model:
                     model.load(path_to_load_model)
-
                 return model
-
+            case "arma":
+                return ARMA(
+                    normalization_params=self.normalization_params,
+                    path_to_save_weights=path_to_save_weights   
+                )
+            case "varma": 
+                model = VARMA(
+                    normalization_params=self.normalization_params, 
+                    path_to_save_weights=path_to_save_weights
+                )
+                if path_to_load_model:
+                    model.load(path_to_load_model) 
+                return model
+            case "sarimax":
+                model = SARIMAX(
+                    normalization_params=self.normalization_params, 
+                    path_to_save_weights=path_to_save_weights
+                )
+                if path_to_load_model:
+                    model.load(path_to_load_model)
+                return model
+            case "arf":
+                return AdaptiveRandomForest(resources=self.resources)
+            case "hat_perceptron":
+                return HoeffdingAdaptiveTreePerceptron(resources=self.resources)
+            case "isoup": 
+                return iSOUP(resources=self.resources)
             case _:
                 raise ValueError("Model not found")
 
