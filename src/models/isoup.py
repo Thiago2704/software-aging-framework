@@ -10,7 +10,7 @@ class iSOUP(OnlineModel):
         self.model = compose.Pipeline(
             preprocessing.StandardScaler(),
             tree.iSOUPTreeRegressor(
-                leaf_prediction='model', 
+                leaf_prediction='model',  # model ou adaptive
                 #quantidade de amostras que o modelo vê antes de decidir se deve criar um novo galho
                 # reduzir grace period se o passo for grande, 
                 #ex: passo de 60seg, 300x60 = 18.000seg= 5hrs
@@ -26,47 +26,51 @@ class iSOUP(OnlineModel):
 
     def predict_one(self, features: dict) -> dict:
         return self.model.predict_one(features)
-    
-    def predict_until_failure(self, current_features: dict, memory_threshold: float, max_horizon: int = 1000):
+        
+    def predict_until_failure(self, current_features: dict, thresholds: dict, max_horizon: int = 100):
+        """
+        Simula o futuro passo-a-passo recursivamente.
+        Entrada: Estado Atual (t) -> Prevê (t+1) -> Usa (t+1) como entrada para prever (t+2)...
+        """
         predictions_path = []
-        next_features = current_features.copy()
+        
+        next_input = current_features.copy()
+        
         steps_to_failure = -1
         
-        # Quantos passos o modelo olha para trás
-        NUM_LAGS = 3  # Exemplo: Se usa lag_1, lag_2 e lag_3
-        
         for i in range(max_horizon):
-            # Prever
-            prediction = self.model.predict_one(next_features)
+            # Prever o próximo estado
+            prediction = self.model.predict_one(next_input)
+            
+            # Se a previsão vier vazia (modelo frio), retorna zeros
+            if not prediction:
+                prediction = {r: 0.0 for r in self.resources}
 
+            # Garante valores não negativos
             for key in prediction:
-                prediction[key] = max(0, prediction[key])
+                prediction[key] = max(0.0, prediction[key])
 
             predictions_path.append(prediction)
             
-            # Verificar Falha (Supondo que a chave seja 'Mem')
-            predicted_mem = prediction.get('Mem', 0)
-            if predicted_mem >= memory_threshold:
-                steps_to_failure = i
-                break
-            
-            # Atualizar a esteira (shift)
-            # Primeiro movemos os antigos para trás (do último para o primeiro)
-            # Ex: lag_3 = lag_2, lag_2 = lag_1
-            # Isso é vital! Se atualizar o lag_1 primeiro, você perde o valor dele antes de passar pro lag_2.
-            for lag in range(NUM_LAGS, 1, -1):
-                # Se tiver features de CPU também, tem que fazer para CPU
-                if f'Mem_lag_{lag-1}' in next_features:
-                    next_features[f'Mem_lag_{lag}'] = next_features[f'Mem_lag_{lag-1}']
+            # Verificar Falha 
+            is_failure = False
+            for res in self.resources:
+                # Pega o limite do dicionário (ex: {'Mem': 8000, 'CPU': 90})
+                limit = thresholds.get(res, float('inf'))
+                val_pred = prediction.get(res, 0)
                 
-                if f'CPU_lag_{lag-1}' in next_features: # Exemplo se tiver CPU
-                    next_features[f'CPU_lag_{lag}'] = next_features[f'CPU_lag_{lag-1}']
+                if val_pred >= limit:
+                    steps_to_failure = i + 1 # Falha prevista no passo i+1
+                    is_failure = True
+                    break # Sai do loop de recursos
+            
+            if is_failure:
+                break # Sai do loop de horizonte 
 
-            # Inserir a nova previsão na "boca" da esteira (lag_1)
-            next_features['Mem_lag_1'] = predicted_mem
-            # Se o modelo também prevê CPU e usa lag de CPU, atualize também:
-            if 'CPU' in prediction:
-                 next_features['CPU_lag_1'] = prediction['CPU']
+            # Atualizar a Entrada para o próximo passo (Recursão)
+            for res in self.resources:
+                if res in prediction:
+                    next_input[res] = prediction[res]
 
         return steps_to_failure, predictions_path
 
