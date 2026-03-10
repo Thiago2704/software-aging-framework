@@ -23,13 +23,13 @@ class VARMA(Model):
         # Nota: (1, 0) é mais estável para online. (2, 1) pode quebrar com poucos dados.
         self.order = order 
         
-        self.window_size = 60  # Tamanho do histórico recente
+        self.window_size =50 #60  # Tamanho do histórico recente
         self.history = []      # Lista de listas [[cpu, mem], [cpu, mem]...]
         self.fitted_model = None 
         
         # Controle de Re-treino
         # Número de passos entre re-treinos
-        self.retrain_interval = 10 
+        self.retrain_interval = 4
         self.steps_since_retrain = 0
 
     def learn_one(self, features: dict, targets: dict):
@@ -40,7 +40,10 @@ class VARMA(Model):
         # Converte dict para lista na ordem correta [Valor_Recurso1, Valor_Recurso2...]
         row = []
         for res in self.resources:
-            row.append(features.get(res, 0.0))
+            val = features.get(res, 0.0)
+            # Normaliza antes de salvar no histórico
+            norm_val = self._normalize(val, res)
+            row.append(norm_val)
         
         # Atualiza Buffer
         self.history.append(row)
@@ -63,20 +66,19 @@ class VARMA(Model):
             df_history = pd.DataFrame(self.history, columns=self.resources)
             
             # Cria o modelo VARMAX
-            model = VARMAX(df_history, order=self.order, enforce_stationarity=False, enforce_invertibility=False)
+            model = VARMAX(df_history, order=self.order, enforce_stationarity=False, enforce_invertibility=False, trend='c',)
             
             # Treina
-            self.fitted_model = model.fit(disp=False, maxiter=100)
+            self.fitted_model = model.fit(disp=False, maxiter=500) #100
             
         except Exception:
             pass
 
-    def predict_until_failure(self, current_features: dict, thresholds: dict, max_horizon: int = 1000):
+    def predict_until_failure(self, current_features: dict, thresholds: dict, max_horizon: int = 100):
         """
         Projeta o futuro de TODAS as variáveis simultaneamente.
         """
         steps_to_failure = -1
-        future_curves = {res: [] for res in self.resources}
 
         if self.fitted_model is None:
             return -1, {}
@@ -95,9 +97,11 @@ class VARMA(Model):
                 for res in self.resources:
                     # Pega o valor previsto no passo i
                     val = predictions_dict[res][i]
+                    real_val = self._denormalize(val, res)
+                    predictions_dict[res][i] = real_val
                     limit = thresholds.get(res, float('inf'))
                     
-                    if val >= limit:
+                    if real_val >= limit:
                         steps_to_failure = i
                         failed = True
                         break 
@@ -123,6 +127,16 @@ class VARMA(Model):
             return forecast_df.iloc[0].to_dict()
         except:
             return current_features
+        
+    def _normalize(self, val, resource):
+        # Pega o (min, max) dos parametros. Ex: Mem: (0, 16000000)
+        min_v, max_v = self.normalization_params.get(resource, (0, 1))
+        if max_v == 0: return 0
+        return val / max_v
+
+    def _denormalize(self, val, resource):
+        min_v, max_v = self.normalization_params.get(resource, (0, 1))
+        return val * max_v
 
     # Métodos obrigatórios da classe base (Offline) 
     def train(self, tr, te): pass
