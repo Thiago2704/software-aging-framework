@@ -1,138 +1,114 @@
+import copy
+from river import time_series
+from river import multioutput
+from river import preprocessing
+from river import compose
+from river import base
 import numpy as np
-import pandas as pd
-from matplotlib import pyplot as plt
-import statsmodels.api as sm
-from statsmodels.tools.sm_exceptions import ConvergenceWarning
-import warnings
+from src.models.online_model import OnlineModel
 
-# Ignorar avisos de convergência para não poluir o log em tempo real
-warnings.simplefilter('ignore', ConvergenceWarning)
+class SNARIMAXAdapter(base.Regressor):
+    def __init__(self, p, d, q, sp, sd, sq, m):
+        self.p, self.d, self.q = p, d, q
+        self.sp, self.sd, self.sq, self.m = sp, sd, sq, m
+        self.model = time_series.SNARIMAX(
+            p=p, d=d, q=q, sp=sp, sd=sd, sq=sq, m=m
+        )
 
-from src.models.model import Model
-from src.utils import denormalize 
+    def learn_one(self, x, y):
+        self.model.learn_one(y=y, x=x)
+        return self
 
-class SARIMAX(Model):
-    def __init__(self, normalization_params: dict[str, tuple[float, float]] = None, path_to_save_weights: str | None = None):
-        self.normalization_params = normalization_params if normalization_params else {}
-        self.resources = list(normalization_params.keys()) if normalization_params else []
-        self.path_to_save_weights = path_to_save_weights
+    def predict_one(self, x):
+        try:
+            return self.model.forecast(horizon=1, xs=[x] if x else None)[0]
+        except Exception:
+            return 0.0
+
+class SARIMAX(OnlineModel):
+    def __init__(self, resources: list[str], p=1, d=1, q=1, m=48, sp=1, sd=0, sq=1):
+        self.resources = list(resources)
+        base_model = SNARIMAXAdapter(p, d, q, sp, sd, sq, m)
         
-        # Buffer para armazenar histórico recente de cada recurso separadamente
-        self.window_size = 60 
-        self.history = {res: [] for res in self.resources}
-        self.fitted_models = {}
-        
-        # Controle de re-treino
-        self.retrain_interval = 10 
-        self.steps_since_retrain = 0
+        # O SNARIMAX do River configurado com Sazonalidade (m=48 para 24h se passo=30min)
+        # o modelo atual não possui sazonalidade
 
-        # Hiperparâmetros SARIMAX 
-        self.order = (1, 1, 1) 
-        # IMPORTANTE: Seasonal order (s=60) exige 60 pontos MÍNIMO para rodar.
-        # Se window_size < 60, vai dar erro. Vamos usar s=0 (sem sazonalidade) no online para ser rápido,
-        # ou garantir que o buffer tenha tamanho suficiente.
-        self.seasonal_order = (0, 0, 0, 0) 
+        # normaliza as variáveis 'x'
+        normalized_model = compose.Pipeline(
+            preprocessing.StandardScaler(),
+            preprocessing.TargetStandardScaler(regressor=base_model)
+        )
+
+        # RegressorChain permite que o modelo seja multivariado (correlação entre variáveis)
+        # Cada recurso na lista aprende com o histórico dos recursos anteriores
+        self.model = multioutput.RegressorChain(
+            model=normalized_model,
+            order=list(self.resources) 
+        )
+        
 
     def learn_one(self, features: dict, targets: dict):
-        """Simula aprendizado online."""
-        if not self.resources:
-            self.resources = list(features.keys())
-            self.history = {res: [] for res in self.resources}
-
-        # Adiciona ao histórico
-        for res in self.resources:
-            if res in features:
-                self.history[res].append(features[res])
-                if len(self.history[res]) > self.window_size:
-                    self.history[res].pop(0)
-
-        self.steps_since_retrain += 1
-
-        # Re-treina periodicamente
-        if self.steps_since_retrain >= self.retrain_interval:
-            # Só treina se tiver dados mínimos (ex: 20 pontos)
-            if len(self.history[self.resources[0]]) > 20:
-                self._retrain_models()
-            self.steps_since_retrain = 0
-
-    def _retrain_models(self):
-        """Reajusta um modelo para cada recurso."""
-        for res in self.resources:
-            try:
-                data = self.history[res]
-                # Cria e treina o modelo do zero com o buffer atual
-                model = sm.tsa.statespace.SARIMAX(
-                    data,
-                    order=self.order,
-                    seasonal_order=self.seasonal_order,
-                    trend='t',
-                    enforce_stationarity=False,
-                    enforce_invertibility=False
-                )
-                self.fitted_models[res] = model.fit(disp=False)
-            except Exception:
-                pass
+        """
+        No SARIMAX online, 'features' são variáveis exógenas (X) 
+        e 'targets' são os valores reais dos recursos (Y).
+        """
+        if len(targets) > 0:
+            # O RegressorChain do River gerencia a distribuição dos alvos
+            # No SNARIMAX, o 'x' em learn_one são as variáveis exógenas
+            self.model.learn_one(x=features, y=targets)
 
     def predict_one(self, features: dict) -> dict:
-        """Prevê o próximo passo."""
-        pred_dict = {}
-        for res in self.resources:
-            if res in self.fitted_models:
-                try:
-                    # Forecast de 1 passo
-                    val = self.fitted_models[res].forecast(steps=1)[0]
-                    pred_dict[res] = max(0, val)
-                except:
-                    pred_dict[res] = features.get(res, 0)
-            else:
-                pred_dict[res] = features.get(res, 0)
-        return pred_dict
+        """Prevê o próximo passo (t+1)"""
+        prediction = self.model.predict_one(x=features)
+        
+        if not prediction:
+            return {r: 0.0 for r in self.resources}
+            
+        # Filtra apenas os recursos que queremos prever, ignorando variáveis exógenas
+        return {res: max(0.0, prediction.get(res, 0.0)) for res in self.resources}
 
-    def predict_until_failure(self, current_features: dict, thresholds: dict, max_horizon: int = 1000):
-        """Projeta o futuro."""
-        steps_to_failure = -1
+    def predict_until_failure(self, current_features: dict, thresholds: dict, max_horizon: int = 336):
+        """
+        Simulação recursiva. 
+        """
         predictions_path = []
+        steps_to_failure = -1
+        
+        # Criamos uma cópia do modelo atual para simular o futuro sem sujar o aprendizado real
+        sim_model = copy.deepcopy(self.model)
+        
+        # Para a simulação, precisamos de uma entrada inicial
+        # Mantemos exógenas (como Fragmentação) constantes durante a projeção
+        next_exog = current_features.copy()
+        
+        for i in range(max_horizon):
+            # Prever o próximo estado (t + i + 1)
+            prediction = sim_model.predict_one(next_exog)
+            
+            if not prediction:
+                prediction = {r: 0.0 for r in self.resources}
 
-        if not self.fitted_models:
-            return -1, []
-
-        try:
-            # Gera previsões para cada recurso separadamente
-            forecasts = {}
+            # Garante valores físicos reais (sem RAM negativa) e filtra apenas recursos previstos
+            prediction = {res: max(0.0, prediction.get(res, 0.0)) for res in self.resources}
+            predictions_path.append(prediction)
+            
+            # Verificar Falha nos Thresholds
+            is_failure = False
             for res in self.resources:
-                if res in self.fitted_models:
-                    forecasts[res] = self.fitted_models[res].forecast(steps=max_horizon)
-                else:
-                    # Se não tem modelo, projeta constante
-                    forecasts[res] = [current_features[res]] * max_horizon
-
-            # Combina os resultados passo a passo
-            for i in range(max_horizon):
-                step_pred = {}
-                failed = False
+                limit = thresholds.get(res, float('inf'))
+                val_pred = prediction.get(res, 0)
                 
-                for res in self.resources:
-                    val = max(0, forecasts[res][i])
-                    step_pred[res] = val
-                    
-                    limit = thresholds.get(res, float('inf'))
-                    if val >= limit:
-                        steps_to_failure = i
-                        failed = True
-                
-                predictions_path.append(step_pred)
-                if failed:
+                if val_pred >= limit:
+                    steps_to_failure = i + 1
+                    is_failure = True
                     break
-                    
-        except Exception as e:
-            print(f"SARIMAX forecast error: {e}")
-            return -1, []
+            
+            if is_failure:
+                break
 
+            # Recursão
+            sim_model.learn_one(x=next_exog, y=prediction)
+            
+            # Atualiza exógenas se houver dependência, ou mantém para o próximo forecast
         return steps_to_failure, predictions_path
-
-    # Métodos base (placeholders)
-    def train(self, tr, te): pass
-    def predict(self, seq): return np.array([])
-    def load(self, p): pass
-    def plot_results(self): pass
-    def get_metrics(self): return {}
+    
