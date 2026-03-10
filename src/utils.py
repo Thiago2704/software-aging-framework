@@ -58,3 +58,36 @@ def split_multivariate_sequences(sequences, n_steps):
         x.append(seq_x)
         y.append(seq_y)
     return np.array(x), np.array(y)
+
+
+class DataAggregator:
+    def __init__(self, resources: list[str], window_size: int):
+        self.resources = resources
+        self.window_size = window_size
+        self._buffer = {res: [] for res in self.resources}
+
+    def add_data(self, raw_data: dict):
+        """Adiciona um snapshot (dado bruto) ao buffer."""
+        for res in self.resources:
+            if res in raw_data:
+                self._buffer[res].append(raw_data[res])
+
+    def is_ready(self) -> bool:
+        """Verifica se o buffer atingiu o tamanho da janela."""
+        # Basta checar um dos recursos, pois todos crescem juntos
+        return len(self._buffer[self.resources[0]]) >= self.window_size
+
+    def get_aggregated_data(self) -> dict:
+        """Calcula a MÉDIA, retorna o dado limpo e ESVAZIA o buffer."""
+        aggregated = {}
+        for res in self.resources:
+            # Calcula a média 
+            if self._buffer[res]:
+                aggregated[res] = np.mean(self._buffer[res])
+            else:
+                aggregated[res] = 0.0 # Fallback caso vazio
+            
+            # Limpar o buffer automaticamente aqui
+            self._buffer[res] = []
+            
+        return aggregated
