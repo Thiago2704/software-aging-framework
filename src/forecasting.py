@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from src.models import HLSTM, MovingAverage, Model, ARMA, VARMA, SARIMAX, AdaptiveRandomForest, HoeffdingAdaptiveTreePerceptron
+from src.models import HLSTM, MovingAverage, Model, SARIMAX, VARMA, ARIMAX, AdaptiveRandomForest, HoeffdingAdaptiveTreePerceptron
 from src.models import iSOUP
 from src.utils import split_sets, normalize
 
@@ -21,8 +21,8 @@ class Forecasting:
         self.resources = resources
         self.normalization_params = {}
 
-        if model_name in ["arf","hat_perceptron", "isoup", "sarimax", "arma", "varma"]:
-            if model_name in ["arma", "varma"]:
+        if model_name in ["arf","hat_perceptron", "isoup", "sarimax", "varma", "arimax"]:
+            if model_name in ["varma"]:
                 for res in self.resources:
                     self.normalization_params[res] = (0.0, 1.0)
                     
@@ -64,11 +64,8 @@ class Forecasting:
                 if path_to_load_model:
                     model.load(path_to_load_model)
                 return model
-            case "arma":
-                return ARMA(
-                    normalization_params=self.normalization_params,
-                    path_to_save_weights=path_to_save_weights   
-                )
+            case "sarimax":
+                return SARIMAX(resources=self.resources)
             case "varma": 
                 model = VARMA(
                     normalization_params=self.normalization_params, 
@@ -77,8 +74,8 @@ class Forecasting:
                 if path_to_load_model:
                     model.load(path_to_load_model) 
                 return model
-            case "sarimax":
-                model = SARIMAX(
+            case "arimax":
+                model = ARIMAX(
                     normalization_params=self.normalization_params, 
                     path_to_save_weights=path_to_save_weights
                 )
