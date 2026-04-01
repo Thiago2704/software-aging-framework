@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 from src.forecasting import Forecasting
 from src.monitor import ResourceMonitorProcess
-from src.utils import DataAggregator, normalize, denormalize
+from src.utils import DataAggregator, normalize, denormalize, calculate_metrics, generate_individual_plots
 from src.data_loader import load_system_metrics
 
 
@@ -296,12 +296,10 @@ class Framework:
     def __run_online_learning(self):
             print(f"\nIniciando Aprendizado Online com {self.model_name}...")
 
-            # --- ADICIONE ESTE PRINT AQUI ---
             print("\n" + "="*40)
-            print(f"DEBUG DE LIMITES (O que o Python vê):")
-            print(f"Dicionário Completo: {self.thresholds_by_resource}")
+            print(f"DEBUG DE LIMITES (O que o Python enxerga):")
+            print(f"Dicionario Completo: {self.thresholds_by_resource}")
             print("="*40 + "\n")
-            # --------------------------------
 
             is_replay_mode = os.path.isdir(self.directory_path) and os.path.exists(os.path.join(self.directory_path, "cpu.csv"))
         
@@ -310,7 +308,7 @@ class Framework:
             aggregator = None
 
             if is_replay_mode:
-                print(f" Modo leitura: Lendo logs históricos de {self.directory_path}")
+                print(f" Modo leitura: Lendo logs historicos de {self.directory_path}")
                 # Carrega dados já agregados (ex: Média Horária)
                 full_df = load_system_metrics(self.directory_path)
                 data_stream = full_df.iterrows()
@@ -331,7 +329,7 @@ class Framework:
             
             last_observation = None
             learning_step = 0
-            warmup_steps = 30 
+            warmup_steps = 15
             
             # Inicializar listas para o gráfico
             timestamps = []
@@ -392,114 +390,134 @@ class Framework:
 
                             features_mean = aggregator.get_aggregated_data()
 
-                    # Se por algum motivo não tivermos features, pula
+                    # Se por algum motivo não tiver features, pula
                     if features_mean is None: continue
 
                     # APRENDER
                     if last_observation is not None:
+
+                        # Warm-up check
+                        if learning_step < warmup_steps:
+
+                            self.forecasting.model.learn_one(last_observation, features_mean)
+                            
+                            learning_step += 1
+                            print(f"\rAquecendo... {learning_step}/{warmup_steps} amostras aprendidas.", end="")
+                            # garante que o 'Hoje' vira 'Ontem' para o próximo ciclo
+                            last_observation = features_mean.copy()
+                            continue
+
+                        if self.model_name in ["arf", "hat_perceptron", "arimax", "sarimax", "varma", "isoup"]:
+                                # Modelo Novo: Aceita dict
+                                threshold_arg = self.thresholds_by_resource
+                        else:
+                                # Modelos Antigos: Esperam float
+                                threshold_arg = self.thresholds_by_resource.get('Mem', float('inf'))
+                        # PREVER
+                        steps_to_fail, path = self.forecasting.model.predict_until_failure(
+                            last_observation, 
+                            threshold_arg,
+                            max_horizon=336 # Olha 336 blocos para frente
+                        )
+
+                        if isinstance(path, dict) and path:
+                                # Se for ARMA (retorna Dict {'CPU': [val1, val2]}), pega o primeiro valor
+                                immediate_pred = {r: path[r][0] for r in self.resources if r in path}
+                        elif isinstance(path, list) and path:
+                                # Se for Outros Modelos (retorna List [{'CPU': val1}, ...]), pega o índice 0
+                                immediate_pred = path[0]
+                        else:
+                                # Se estiver vazio
+                                immediate_pred = {r: 0 for r in self.resources}
+                        
+                        # Guardar dados para o gráfico
+                        timestamps.append(len(timestamps) + 1)
+                        for res in self.resources:
+                            immediate_pred[res] = max(0, immediate_pred.get(res, 0))
+                            history_real[res].append(features_mean[res])
+                            history_pred[res].append(immediate_pred[res])
+
+                        # Guardar métricas auxiliares
+                        for res in aux_metrics:
+                            val = features_mean.get(res, 0)
+                            history_aux[res].append(val)
+
+                        # Aprender com o dado real (features_mean) e o target real (features_mean) 
+                        # - ou seja, queremos que o modelo aprenda a prever o próximo passo igual ao atual, forçando a correção imediata
                         self.forecasting.model.learn_one(last_observation, features_mean)
                         learning_step += 1 
 
-                    # Atualiza o buffer
-                    last_observation = features_mean
+                        # Verificar Thresholds
+                        flag_list = []
+                        print(f"\nStatus Real: {features_mean} | Previsto: {immediate_pred}") 
 
-                    # Warm-up check
-                    if learning_step < warmup_steps:
-                        print(f"\rAquecendo... {learning_step}/{warmup_steps} amostras aprendidas.", end="")
-                        continue
-
-                    if self.model_name in ["arf", "hat_perceptron", "arimax", "sarimax", "varma", "isoup"]:
-                            # Modelo Novo: Aceita dict
-                            threshold_arg = self.thresholds_by_resource
-                    else:
-                            # Modelos Antigos: Esperam float
-                            threshold_arg = self.thresholds_by_resource.get('Mem', float('inf'))
-                    # PREVER
-                    steps_to_fail, path = self.forecasting.model.predict_until_failure(
-                        features_mean, 
-                        threshold_arg,
-                        max_horizon=336 # Olha 100 blocos para frente
-                    )
-
-                    if isinstance(path, dict) and path:
-                            # Se for ARMA (retorna Dict {'CPU': [val1, val2]}), pega o primeiro valor
-                            immediate_pred = {r: path[r][0] for r in self.resources if r in path}
-                    elif isinstance(path, list) and path:
-                            # Se for Outros Modelos (retorna List [{'CPU': val1}, ...]), pega o índice 0
-                            immediate_pred = path[0]
-                    else:
-                            # Se estiver vazio
-                            immediate_pred = {r: 0 for r in self.resources}
-                    
-                    # Guardar dados para o gráfico
-                    timestamps.append(len(timestamps) + 1)
-                    for res in self.resources:
-                        immediate_pred[res] = max(0, immediate_pred.get(res, 0))
-                        history_real[res].append(features_mean[res])
-                        history_pred[res].append(immediate_pred[res])
-
-                    # Guardar métricas auxiliares
-                    for res in aux_metrics:
-                        val = features_mean.get(res, 0)
-                        history_aux[res].append(val)
-
-                    # Verificar Thresholds
-                    flag_list = []
-                    print(f"\nStatus Real: {features_mean} | Previsto: {immediate_pred}") 
-
-                    if steps_to_fail != -1:
-                        print(f"\nActivated Rejuvenation (Falha prevista em {steps_to_fail} blocos)\n")
-                        if not is_replay_mode:
-                            self.__trigger_rejuvenation()
-                            running = False
-                    
-                    for res in self.resources:
-                        pred_value = immediate_pred[res]
-                        if pred_value > self.thresholds_by_resource[res]:
-                            flag_list.append(1)
-                            print(f"ALERTA: {res} previsto ({pred_value:.2f}) > Limite")
-                        else:
-                            flag_list.append(0)
-                    
-                    if 1 in flag_list:
-                        print("\nActivated Rejuvenation (Online Model Predicted Failure)\n")
-                        #Só reinicia se não for modo Replay
-                        if not is_replay_mode:
-                            for process in psutil.process_iter(attrs=["pid", "name"]):
-                                if self.process_name.lower() in process.info["name"].lower():
-                                    self.__restart_process(
-                                        process, self.start_command, self.restart_command
-                                    )
-                                    running = False
-                                    break
+                        if steps_to_fail != -1:
+                            print(f"\nActivated Rejuvenation (Falha prevista em {steps_to_fail} blocos)\n")
+                            if not is_replay_mode:
+                                self.__trigger_rejuvenation()
+                                running = False
+                        
+                        for res in self.resources:
+                            pred_value = immediate_pred[res]
+                            if pred_value > self.thresholds_by_resource[res]:
+                                flag_list.append(1)
+                                print(f"ALERTA: {res} previsto ({pred_value:.2f}) > Limite")
+                            else:
+                                flag_list.append(0)
+                        
+                        if 1 in flag_list:
+                            print("\nActivated Rejuvenation (Online Model Predicted Failure)\n")
+                            #Só reinicia se não for modo Replay
+                            if not is_replay_mode:
+                                for process in psutil.process_iter(attrs=["pid", "name"]):
+                                    if self.process_name.lower() in process.info["name"].lower():
+                                        self.__restart_process(
+                                            process, self.start_command, self.restart_command
+                                        )
+                                        running = False
+                                        break
+                                            # Atualiza o buffer
+                    last_observation = features_mean.copy()
             
             except KeyboardInterrupt:
-                print("\nMonitoramento interrompido pelo usuário.")
+                print("\nMonitoramento interrompido pelo usuario.")
 
             finally: 
                 if not is_replay_mode:
                     self.monitor_process.terminate()
 
+                print("\n" + "="*50)
+                print(f"RELATORIO DE PRECISAO DO MODELO: {self.model_name.upper()}")
+                print("="*50)
+                
+                # Para cada recurso monitorizado, calcula e imprime as métricas
+                for res in self.resources:
+                    reais = history_real[res]
+                    preds = history_pred[res]
+                    
+                    if len(reais) > 0 and len(preds) > 0:
+                        metricas = calculate_metrics(reais, preds)
+                        print(f"Recurso: {res}")
+                        print(f"  - MAD  (Erro Absoluto): {metricas['MAD']}")
+                        print(f"  - MSD  (Erro Quadratico): {metricas['MSD']}")
+                        print(f"  - MAPE (Erro Percentual): {metricas['MAPE']}%")
+                        print("-" * 50)
+
                 # Gerar e Salvar o Gráfico
                 if self.save_plot and len(timestamps) > 0:
-                    print("\nGerando gráfico de execução online...")
-                    plt.figure(figsize=(12, 6))
+                    # Define qual diretório base enviar para o utilitário
+                    base_dir = self.directory_path if is_replay_mode else self.filename
                     
-                    for idx, res in enumerate(self.resources):
-                        plt.subplot(len(self.resources), 1, idx + 1)
-                        plt.plot(timestamps, history_real[res], label=f'Real {res}', color='blue')
-                        plt.plot(timestamps, history_pred[res], label=f'Predição {res} ({self.model_name})', color='green', linestyle='--')
-                        plt.title(f"{res} - Real vs Online Prediction")
-                        plt.legend()
-                        plt.grid(True)
-                    
-                    plt.tight_layout()
-                    if is_replay_mode:
-                        path_to_save = os.path.join(self.directory_path, "replay_analysis_graph.png")
-                    else: 
-                        path_to_save = self.filename.replace(".csv", ".png")
-                    plt.savefig(path_to_save)
-                    print(f"Gráfico salvo em: {path_to_save}")
+                    # Chama a função externa para fazer o trabalho visual
+                    generate_individual_plots(
+                        resources=self.resources,
+                        timestamps=timestamps,
+                        history_real=history_real,
+                        history_pred=history_pred,
+                        model_name=self.model_name,
+                        base_path=base_dir,
+                        is_replay_mode=is_replay_mode
+                    )  
 
     def __trigger_rejuvenation(self):
         for process in psutil.process_iter(attrs=["pid", "name"]):
