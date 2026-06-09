@@ -5,19 +5,20 @@ from collections import deque
 import numpy as np
 
 class AdaptiveRandomForest(OnlineModel):
-    def __init__(self, resources: list[str], n_models: int = 10, seed: int = 42, window_size: int = 60):
+    # window_size: quantidade de passos anteriores que o modelo considera para calcular as features 
+    def __init__(self, resources: list[str], n_models: int = 10, seed: int = 42, window_size: int = 30):
         
         self.resources = list(resources)
         self.window_size = window_size
         # Cria um modelo ARF separado para cada recurso (CPU, Mem)
 
+        # teto dinâmico para normalização, começa com 1.0 e se adapta ao longo do tempo
+        self.target_max = {res: 1.0 for res in self.resources}
+
         self.models = {}
         for res in self.resources:
-            base_arf = ARFRegressor(n_models=n_models, seed=seed)
-            # Impede que a árvore sofra overflow calculando variância em milhões
-            self.models[res] = compose.Pipeline(
-                preprocessing.TargetStandardScaler(regressor=base_arf)
-            )
+            self.models[res] = ARFRegressor(n_models=n_models, seed=seed)
+
         # BUFFER INTERNO: Cada modelo gerencia seu histórico
         # Buffer agora começa vazio e adapta-se dinamicamente a variáveis auxiliares
         self.rolling_windows = {}
@@ -27,6 +28,9 @@ class AdaptiveRandomForest(OnlineModel):
         Método privado que transforma dados brutos em estatísticas (Média, Max, Std).
         """
         enriched_features = {}
+
+        for key, value in raw_features.items():
+            enriched_features[f"{key}_raw"] = value
         
         # Atualiza as janelas, criando novas automaticamente se aparecer 'Frag_1' ou 'DiskIO'
         for key, value in raw_features.items():
@@ -62,8 +66,15 @@ class AdaptiveRandomForest(OnlineModel):
         
         for res in self.resources:
             if res in target:
+                valor_real = target[res]
+                # Atualiza o teto dinâmico para normalização (decay para se adaptar a mudanças)
+                self.target_max[res] = max(valor_real, self.target_max[res] * 0.995)
+                
+                # Normalização 
+                teto_atual = max(self.target_max[res], 1e-6)
+                norm_target = valor_real / teto_atual
                 # O modelo de CPU aprende a prever CPU usando todas as features
-                self.models[res].learn_one(enriched_features, target[res])
+                self.models[res].learn_one(enriched_features, norm_target)
 
     def predict_one(self, features: dict) -> dict:
         """
@@ -71,6 +82,8 @@ class AdaptiveRandomForest(OnlineModel):
         """
         enriched_features = {}
         for key, value in features.items():
+            # Adiciona o valor bruto para cada recurso (ex: 'CPU_raw': 10.5)
+            enriched_features[f"{key}_raw"] = value
             # Pega o histórico existente
             data = list(self.rolling_windows.get(key, []))
             # Adiciona o dado ATUAL temporariamente para o cálculo
@@ -82,9 +95,13 @@ class AdaptiveRandomForest(OnlineModel):
 
         predictions = {}
         for res in self.resources:
-            pred = self.models[res].predict_one(enriched_features)
-            # Garantir que a previsão não seja negativa quando a arvore não tiver aprendido o suficiente
-            predictions[res] = max(0.0, pred if pred is not None else 0.0)
+            # A ÁRVORE PREVÊ UM NÚMERO ENTRE 0 E 1
+            norm_pred = self.models[res].predict_one(enriched_features)
+            norm_pred = norm_pred if norm_pred is not None else 0.0
+            
+            # DESNORMALIZA: MULTIPLICA PELO TETO ATUAL PARA TER O VALOR REAL
+            real_pred = norm_pred * self.target_max[res]
+            predictions[res] = max(0.0, real_pred)
 
         
         return predictions
@@ -116,6 +133,7 @@ class AdaptiveRandomForest(OnlineModel):
             # Calcular Features Baseadas na Janela Simulada
             step_features = {}
             for key, data in simulated_windows.items():
+                step_features[f"{key}_raw"] = data[-1]
                 step_features[f"{key}_mean"] = np.mean(data)
                 step_features[f"{key}_max"] = np.max(data)
                 step_features[f"{key}_std"] = np.std(data)
@@ -123,9 +141,12 @@ class AdaptiveRandomForest(OnlineModel):
             # Prever o Próximo Passo
             step_prediction = {}
             for res in self.resources:
-                pred = self.models[res].predict_one(step_features)
-                # Garantir que a previsão não seja negativa
-                step_prediction[res] = max(0, pred) 
+                norm_pred = self.models[res].predict_one(step_features)
+                norm_pred = norm_pred if norm_pred is not None else 0.0
+                
+                # DESNORMALIZAÇÃO TAMBÉM NO FUTURO SIMULADO
+                real_pred = norm_pred * self.target_max[res]
+                step_prediction[res] = max(0.0, real_pred)
 
             predictions_path.append(step_prediction)
 
