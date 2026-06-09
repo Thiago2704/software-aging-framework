@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from src.models import HLSTM, MovingAverage, Model, SARIMAX, VARMA, ARIMAX, AdaptiveRandomForest, HoeffdingAdaptiveTreePerceptron
-from src.models import iSOUP
+from src.models import iSOUP, SNARIMAX_Tree
 from src.utils import split_sets, normalize
 
 
@@ -21,7 +21,9 @@ class Forecasting:
         self.resources = resources
         self.normalization_params = {}
 
-        if model_name in ["arf","hat_perceptron", "isoup", "sarimax", "varma", "arimax"]:
+        if model_name in ["arf","hat_perceptron", "isoup", "sarimax", "varma", "arimax",
+                          "snarimax_ht","snarimax_hat",
+                          "snarimax_oxt", "snarimax_arf", "snarimax_amf"]:
             if model_name in ["varma"]:
                 for res in self.resources:
                     self.normalization_params[res] = (0.0, 1.0)
@@ -65,7 +67,13 @@ class Forecasting:
                     model.load(path_to_load_model)
                 return model
             case "sarimax":
-                return SARIMAX(resources=self.resources)
+                model = SARIMAX(
+                    normalization_params=self.normalization_params, 
+                    path_to_save_weights=path_to_save_weights
+                )
+                if path_to_load_model:
+                    model.load(path_to_load_model)
+                return model
             case "varma": 
                 model = VARMA(
                     normalization_params=self.normalization_params, 
@@ -88,6 +96,12 @@ class Forecasting:
                 return HoeffdingAdaptiveTreePerceptron(resources=self.resources)
             case "isoup": 
                 return iSOUP(resources=self.resources)
+            case ("snarimax_hat" | "snarimax_ht" | 
+                  "snarimax_oxt" | "snarimax_arf" | "snarimax_amf"):
+                return SNARIMAX_Tree(
+                    resources=self.resources,
+                    tree_type=model_name
+                )
             case _:
                 raise ValueError("Model not found")
 
