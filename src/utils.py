@@ -61,97 +61,128 @@ def split_multivariate_sequences(sequences, n_steps):
         y.append(seq_y)
     return np.array(x), np.array(y)
 
-def generate_individual_plots(resources: list, timestamps: list, history_real: dict, history_pred: dict, model_name: str, base_path: str, is_replay_mode: bool):
+def generate_individual_plots(resources: list, timestamps: list, history_real: dict, history_pred: dict, model_name: str, base_path: str, is_replay_mode: bool, split_step: int, metricas_erro: dict):
     """
-    Gera e salva gráficos individuais em estilo Dashboard Dark Mode para cada recurso monitorizado.
+    Gera gráficos com linha de corte (split) e banda de confiança (margem de erro).
     """
-    print("\nGerando gráficos de execução online (Estilo Dashboard)...")
+    print("\nGerando gráficos de Previsão de Longo Prazo (Horizonte Escuro)...")
     
-    largura = 6
-    altura = 4
+    largura = 8
+    altura = 5
     cor_real = "#1125bc"
     cor_pred = "#c80707"
 
-    # Descubra quantos minutos vale cada passo (se mudou o resample para 1min, coloque 1. Se for 30min, coloque 30)
-    minutos_por_passo = 30 
-    
-    # Cria uma nova lista convertendo os passos (timestamps) para horas
+    minutos_por_passo = 10
     tempo_em_horas = [(t * minutos_por_passo) / 60 for t in timestamps]
+    #tempo em minutos
+    #tempo_em_horas = [t * minutos_por_passo for t in timestamps]
+
+    # Momento exato onde a previsão começou (Linha Vertical)
+    tempo_split = tempo_em_horas[split_step - 1] if split_step - 1 < len(tempo_em_horas) else tempo_em_horas[-1]
     
     for res in resources:
         fig, ax = plt.subplots(figsize=(largura, altura))
-        #cor do fundo
-
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
 
-        resources_names ={
-            'CPU': "CPU",
-            'Mem': "Memory",
-            'Swap': "Swap",
-            'DiskSpace': "Disk Space",
-        }
+        fator_conversao = 1024 if res in ['Mem', 'Swap', 'DiskSpace'] else 1 
 
-        texto_y = resources_names.get(res, res)
-        fator_conversao = 1024 if res in ['Mem', 'Swap', 'DiskSpace'] else 1
+        # Quantos passos a linha vermelha (previsão) conseguiu dar
+        passos_previstos = len(history_pred.get(res, []))
+        
+        # Descobre onde a linha azul deve parar
+        if passos_previstos > 0:
+            # Para no exato momento: Início da previsão + Passos que sobreviveu
+            limite_final = (split_step -1) + passos_previstos
+        else:
+            # Se não houver previsão, desenha tudo
+            limite_final = len(history_real[res])
+            
+        # Faz o corte (slice) nas listas originais para o tamanho exato
+        y_real_plot = [v / fator_conversao for v in history_real[res][:limite_final]]
+        tempo_real_plot = tempo_em_horas[:limite_final]
+        
+        # Plot da linha REAL contínua 
+        ax.plot(tempo_real_plot, y_real_plot, label=f'Real {res}', color=cor_real, linewidth=1.8)
+        
+        # Prepara a linha de PREVISÃO (começa apenas a partir do split_step)
+        if len(history_pred[res]) > 0:
+            
+            tempo_pred = tempo_em_horas[split_step - 1 : split_step - 1 + len(history_pred[res])]
+            y_pred_plot = [v / fator_conversao for v in history_pred[res]]
 
-        # Cria listas temporárias com os valores convertidos apenas para desenhar o gráfico
-        y_real_plot = [v / fator_conversao for v in history_real[res]]
-        y_pred_plot = [v / fator_conversao for v in history_pred[res]]
-        
-        # Plot das linhas 
-        ax.plot(tempo_em_horas, y_real_plot, label=f'Real {texto_y}', color=cor_real, linewidth=1.8)
-        ax.plot(tempo_em_horas, y_pred_plot, label=f'Predicted {texto_y}', color=cor_pred, linestyle='--', linewidth=1.8)
+            # INTERVALOS DE CONFIANÇA 80% E 95%
+            if res in metricas_erro:
+                mad = metricas_erro[res]['MAD'] / fator_conversao
+                
+                y_upper_95, y_lower_95 = [], []
+                y_upper_80, y_lower_80 = [], []
+                
+                num_passos = len(y_pred_plot)
+                
+                for step, p in enumerate(y_pred_plot):
+                    # a incerteza cresce com a raiz quadrada do tempo
+                    fator_incerteza = (step / (num_passos - 1)) ** 0.5 if num_passos > 1 else 0
+                    
+                    # Multiplicadores para simular Intervalos de Confiança baseados no MAD
+                    # (Aproximação baseada na Distribuição Normal: MAD * 1.25 = Desvio Padrão)
+                    # 95% = 1.96 * Desvio Padrão  -> aprox. 2.45 * MAD
+                    # 80% = 1.28 * Desvio Padrão  -> aprox. 1.60 * MAD
+                    
+                    erro_80 = mad * 1.60 * fator_incerteza
+                    erro_95 = mad * 2.45 * fator_incerteza
+                    
+                    # Limites 95% (Cinza Claro - Mais largo)
+                    y_upper_95.append(p + erro_95)
+                    y_lower_95.append(max(0, p - erro_95))
+                    
+                    # Limites 80% (Cinza Escuro - Mais estreito)
+                    y_upper_80.append(p + erro_80)
+                    y_lower_80.append(max(0, p - erro_80))
+                
+                # Cores do Intervalo de Confiança
+                cor_ci_95 = "#E0E0E0" # Cinza claro
+                cor_ci_80 = "#BDBDBD" # Cinza mais escuro
+                
+                # DESENHAR PRIMEIRO AS SOMBRAS (Para ficarem no fundo)
+                # Desenha a sombra mais larga (95%)
+                ax.fill_between(tempo_pred, y_lower_95, y_upper_95, color=cor_ci_95, label='95% Confidence Interval')
+                
+                # Desenha a sombra mais estreita (80%) por cima da clara
+                ax.fill_between(tempo_pred, y_lower_80, y_upper_80, color=cor_ci_80, label='80% Confidence Interval')
 
-        # Zoom Dinâmico
-        valores_reais = [v for v in y_real_plot if v > 0]
-        valores_pred = [v for v in y_pred_plot if v > 0]
-        todos_valores = valores_reais + valores_pred
-        
-        if todos_valores:
-            min_y, max_y = min(todos_valores), max(todos_valores)
-            amplitude = max_y - min_y
-            margem = amplitude * 0.1 if amplitude > 0 else min_y * 0.05
-            ax.set_ylim(bottom=max(0, min_y - margem), top=max_y + margem)
-        
-        # Estilização
+            # DESENHAR A LINHA VERMELHA POR ÚLTIMO (Para ficar destacada por cima dos cinzas)
+            ax.plot(tempo_pred, y_pred_plot, label=f'Predicted {res}', color=cor_pred, linewidth=2.0)
+
+        # --- LINHA VERTICAL PONTILHADA ---
+        ax.axvline(x=tempo_split, color='gray', linestyle=':', linewidth=2, label='Forecast Start')
+
+        # Zoom Dinâmico e Estilização
         ax.tick_params(colors="#000000", labelsize=10)
-
-        # Legenda do Eixo X (Tempo)
-        ax.set_xlabel("Time (Hours)", color="#000000", fontsize=11, fontweight='bold', labelpad=10)
+        ax.set_xlabel("Time (hours)", color="#000000", fontsize=11, fontweight='bold', labelpad=10)
         
-        # Legenda do Eixo Y (Recurso dinâmico)
-        #ax.set_ylabel(f"Consumo de {res}", color="#000000", fontsize=11, fontweight='bold', labelpad=10)
-
-        # Dicionário de Legendas
         legendas_y = {
             'CPU': "CPU utilization (%)",
             'Mem': "Memory Usage (MB)",
             'Swap': "Swap Usage (MB)",
             'DiskSpace': "Disk Space Used (MB)",
         }
-                
         texto_y = legendas_y.get(res, f"Consumo de {res}")
-        # Aplica a legenda
         ax.set_ylabel(texto_y, color="#000000", fontsize=11, fontweight='bold', labelpad=10)
         
         for spine in ax.spines.values():
             spine.set_color('#333333')
    
-        #ax.grid(True, color='#333333', linestyle='--', linewidth=0.8, alpha=0.7)
         ax.legend(facecolor='white', edgecolor='#cccccc', labelcolor='black', loc='upper left')
-    
         plt.tight_layout()
         
-        # Resolução do caminho de salvamento
         if is_replay_mode:
-            path_to_save = os.path.join(base_path, f"replay_analysis_graph_{res}.png")
+            path_to_save = os.path.join(base_path, f"horizon_graph_{res}.png")
         else: 
             path_to_save = base_path.replace(".csv", f"_{res}.png")
             
         plt.savefig(path_to_save, dpi=300, facecolor=fig.get_facecolor(), edgecolor='none')
         print(f"Gráfico salvo em: {path_to_save}")
-        
         plt.close(fig)
 
 
@@ -176,6 +207,30 @@ def calculate_metrics(real_values: list, pred_values: list) -> dict:
         "MSD": round(msd, 4),
         "MAPE": round(mape, 2) # Retorna em porcentagem (ex: 5.43%)
     }
+
+def save_metrics_to_txt(model_name: str, split_step: int, horizon: int, metrics_dict: dict, base_dir: str):
+    """
+    Salva as métricas de erro num ficheiro .txt formatado.
+    """
+    if not metrics_dict:
+        return
+        
+    caminho_txt = os.path.join(base_dir, f"metricas_erro_{model_name}.txt")
+    
+    with open(caminho_txt, "w", encoding="utf-8") as f_out:
+        f_out.write("="*50 + "\n")
+        f_out.write(f"RELATORIO DE PRECISAO - MODELO: {model_name.upper()}\n")
+        f_out.write(f"Split Step: {split_step} | Horizonte: {horizon}\n")
+        f_out.write("="*50 + "\n\n")
+        
+        for res, metricas in metrics_dict.items():
+            f_out.write(f"Recurso: {res}\n")
+            f_out.write(f"  - MAD  (Erro Absoluto): {metricas['MAD']}\n")
+            f_out.write(f"  - MSD  (Erro Quadratico): {metricas['MSD']}\n")
+            f_out.write(f"  - MAPE (Erro Percentual): {metricas['MAPE']}%\n")
+            f_out.write("-" * 50 + "\n")
+            
+    print(f"\n[+] Arquivo de métricas salvo com sucesso em: {caminho_txt}")
 
 class DataAggregator:
     def __init__(self, resources: list[str], window_size: int):
