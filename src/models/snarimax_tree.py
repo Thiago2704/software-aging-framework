@@ -73,10 +73,6 @@ class SNARIMAX_Tree(OnlineModel):
                     leaf_prediction='adaptive',
                     seed=42
                 )  
-            case 'SNARIMAX_SGT': # Stochastic Gradient Tree
-                base_regressor = tree.SGTRegressor(
-                    grace_period=20
-                )
 
             # Florestas
             case 'SNARIMAX_ARF': # Adaptive Random Forest
