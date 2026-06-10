@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 from src.forecasting import Forecasting
 from src.monitor import ResourceMonitorProcess
-from src.utils import DataAggregator, normalize, denormalize, calculate_metrics, generate_individual_plots
+from src.utils import DataAggregator, normalize, denormalize, calculate_metrics, generate_individual_plots, save_metrics_to_txt
 from src.data_loader import load_system_metrics
 
 
@@ -36,6 +36,11 @@ class Framework:
         start_command: str,
         restart_command: str | None,
         normalization_log_path: str,
+
+        # NOVAS VARIÁVEIS PARA AUTOMAÇÃO
+        split_step: int = 300,
+        horizonte_de_previsao: int = 96,
+        output_directory: str = None
     ):
         self.run_monitoring = run_monitoring
         self.resources = resources_to_predict
@@ -62,7 +67,14 @@ class Framework:
         self.monitor_process: ResourceMonitorProcess | None = None
         self.error_queue = Queue()
         self.normalization_log_path = normalization_log_path
-        self.online_models = ["arf", "hat_perceptron", "isoup", "arimax", "sarimax", "varma"]
+        self.online_models = ["arf", "hat_perceptron", "isoup", "arimax", "sarimax", "varma",
+                              "snarimax_ht","snarimax_hat",
+                              "snarimax_oxt", "snarimax_arf", "snarimax_amf"] # Lista de modelos que usam aprendizado online
+        
+        # variaveis auxiliares para automação com script
+        self.split_step = split_step
+        self.horizonte_de_previsao = horizonte_de_previsao
+        self.output_directory = output_directory
 
 
         if self.model_name in self.online_models:
@@ -113,7 +125,9 @@ class Framework:
         return None
 
     def run(self):
-        if self.model_name in ["arf","hat_perceptron", "isoup", "arimax", "sarimax", "varma"]:
+        if self.model_name in ["arf","hat_perceptron", "isoup", "arimax", "sarimax", "varma",
+                               "snarimax_ht","snarimax_hat", 
+                               "snarimax_oxt", "snarimax_arf", "snarimax_amf"]:
             self.__run_online_learning()
             return
         elif self.run_in_real_time:
@@ -329,7 +343,7 @@ class Framework:
             
             last_observation = None
             learning_step = 0
-            warmup_steps = 15
+            warmup_steps = 0
             
             # Inicializar listas para o gráfico
             timestamps = []
@@ -342,6 +356,11 @@ class Framework:
             running = True
 
             print(f"Monitoramento iniciado. Aquecendo modelo por {warmup_steps} segundos...")
+
+            SPLIT_STEP = self.split_step # Passo onde o modelo para de aprender e começa a prever o futuro 
+            HORIZONTE_DE_PREVISAO = self.horizonte_de_previsao # Quantos passos para o futuro ele vai adivinhar
+
+            todas_metricas_erro = {} # Guardará os cálculos de erro
 
             try: 
                 while running:
@@ -393,92 +412,67 @@ class Framework:
                     # Se por algum motivo não tiver features, pula
                     if features_mean is None: continue
 
-                    # APRENDER
-                    if last_observation is not None:
+                    timestamps.append(len(timestamps)+1)
+                    for res in self.resources:
+                        history_real[res].append(features_mean[res]) # Salva a realidade continuamente
 
-                        # Warm-up check
-                        if learning_step < warmup_steps:
-
+                    # MONITORAMENTO E APRENDIZADO SILENCIOSO 
+                    if learning_step < SPLIT_STEP:
+                        if last_observation is not None:
                             self.forecasting.model.learn_one(last_observation, features_mean)
-                            
-                            learning_step += 1
-                            print(f"\rAquecendo... {learning_step}/{warmup_steps} amostras aprendidas.", end="")
-                            # garante que o 'Hoje' vira 'Ontem' para o próximo ciclo
-                            last_observation = features_mean.copy()
-                            continue
-
-                        if self.model_name in ["arf", "hat_perceptron", "arimax", "sarimax", "varma", "isoup"]:
-                                # Modelo Novo: Aceita dict
-                                threshold_arg = self.thresholds_by_resource
+                        last_observation = features_mean.copy()
+                        learning_step += 1
+                        print(f"\rMonitorando e Aprendendo... {learning_step}/{SPLIT_STEP}", end="")
+                        continue
+                    
+                    # MOMENTO DA PREVISÃO NO ESCURO 
+                    elif learning_step == SPLIT_STEP:
+                        print(f"\n\n[!] Passo {SPLIT_STEP} atingido! Parando aprendizado e prevendo futuro...")
+                        
+                        # se estiver em modo replay, ignora os limites dos recursos para evitar que o modelo pare de prever
+                        if is_replay_mode:
+                            if self.model_name in ["arf", "hat_perceptron", "arimax", "sarimax", "varma", "isoup",
+                                                   "snarimax_ht","snarimax_hat",
+                                                   "snarimax_oxt", "snarimax_arf", "snarimax_amf"]:
+                                threshold_arg = {res: float('inf') for res in self.resources}
+                            else:
+                                threshold_arg = float('inf')
+                            print(" -> Modo Replay: Limites originais ignorados para desenhar TODO o horizonte.")
                         else:
-                                # Modelos Antigos: Esperam float
-                                threshold_arg = self.thresholds_by_resource.get('Mem', float('inf'))
-                        # PREVER
+                            threshold_arg = self.thresholds_by_resource if self.model_name in ["arf", "hat_perceptron", "arimax", "sarimax", "varma", "isoup",
+                                                                                               "snarimax_ht","snarimax_hat", 
+                                                                                               "snarimax_oxt", "snarimax_arf", "snarimax_amf"] else self.thresholds_by_resource.get('Mem', float('inf'))
+                        # Gera o forecast completo para o futuro
                         steps_to_fail, path = self.forecasting.model.predict_until_failure(
                             last_observation, 
                             threshold_arg,
-                            max_horizon=336 # Olha 336 blocos para frente
+                            max_horizon=HORIZONTE_DE_PREVISAO 
                         )
-
-                        if isinstance(path, dict) and path:
-                                # Se for ARMA (retorna Dict {'CPU': [val1, val2]}), pega o primeiro valor
-                                immediate_pred = {r: path[r][0] for r in self.resources if r in path}
-                        elif isinstance(path, list) and path:
-                                # Se for Outros Modelos (retorna List [{'CPU': val1}, ...]), pega o índice 0
-                                immediate_pred = path[0]
-                        else:
-                                # Se estiver vazio
-                                immediate_pred = {r: 0 for r in self.resources}
                         
-                        # Guardar dados para o gráfico
-                        timestamps.append(len(timestamps) + 1)
-                        for res in self.resources:
-                            immediate_pred[res] = max(0, immediate_pred.get(res, 0))
-                            history_real[res].append(features_mean[res])
-                            history_pred[res].append(immediate_pred[res])
-
-                        # Guardar métricas auxiliares
-                        for res in aux_metrics:
-                            val = features_mean.get(res, 0)
-                            history_aux[res].append(val)
-
-                        # Aprender com o dado real (features_mean) e o target real (features_mean) 
-                        # - ou seja, queremos que o modelo aprenda a prever o próximo passo igual ao atual, forçando a correção imediata
-                        self.forecasting.model.learn_one(last_observation, features_mean)
-                        learning_step += 1 
-
-                        # Verificar Thresholds
-                        flag_list = []
-                        print(f"\nStatus Real: {features_mean} | Previsto: {immediate_pred}") 
-
-                        if steps_to_fail != -1:
-                            print(f"\nActivated Rejuvenation (Falha prevista em {steps_to_fail} blocos)\n")
-                            if not is_replay_mode:
-                                self.__trigger_rejuvenation()
-                                running = False
+                        # Salva o caminho previsto no history_pred inteiro de uma vez!
+                        if isinstance(path, dict): # Para VARMA
+                            for res in self.resources:
+                                history_pred[res] = path.get(res, [])
+                        elif isinstance(path, list): # Para River
+                            for res in self.resources:
+                                history_pred[res] = [step.get(res, 0) for step in path]
+                                
+                        learning_step += 1
                         
-                        for res in self.resources:
-                            pred_value = immediate_pred[res]
-                            if pred_value > self.thresholds_by_resource[res]:
-                                flag_list.append(1)
-                                print(f"ALERTA: {res} previsto ({pred_value:.2f}) > Limite")
-                            else:
-                                flag_list.append(0)
+                        # Se não for modo replay, parar de monitorar depois da previsão
+                        if not is_replay_mode:
+                            running = False
+
+                    # APENAS OBSERVAÇÃO DA REALIDADE 
+                    else:
+                        learning_step += 1
+                        print(f"\rObservando realidade para comparação... {learning_step}", end="")
                         
-                        if 1 in flag_list:
-                            print("\nActivated Rejuvenation (Online Model Predicted Failure)\n")
-                            #Só reinicia se não for modo Replay
-                            if not is_replay_mode:
-                                for process in psutil.process_iter(attrs=["pid", "name"]):
-                                    if self.process_name.lower() in process.info["name"].lower():
-                                        self.__restart_process(
-                                            process, self.start_command, self.restart_command
-                                        )
-                                        running = False
-                                        break
-                                            # Atualiza o buffer
-                    last_observation = features_mean.copy()
-            
+                        # Se já observou realidade suficiente para cobrir todo o horizonte previsto, encerra.
+                        if learning_step >= SPLIT_STEP + HORIZONTE_DE_PREVISAO:
+                            print("\nFim do horizonte de previsão atingido!")
+                            running = False
+
             except KeyboardInterrupt:
                 print("\nMonitoramento interrompido pelo usuario.")
 
@@ -487,26 +481,45 @@ class Framework:
                     self.monitor_process.terminate()
 
                 print("\n" + "="*50)
-                print(f"RELATORIO DE PRECISAO DO MODELO: {self.model_name.upper()}")
+                print(f"RELATORIO DE PRECISAO DO HORIZONTE DE PREVISAO: {self.model_name.upper()}")
                 print("="*50)
                 
-                # Para cada recurso monitorizado, calcula e imprime as métricas
+                # Calcula as métricas APENAS para o período de previsão (comparando o futuro real com o previsto)
                 for res in self.resources:
-                    reais = history_real[res]
-                    preds = history_pred[res]
+                    reais_futuro = history_real[res][SPLIT_STEP : SPLIT_STEP + HORIZONTE_DE_PREVISAO]
+                    preds_futuro = history_pred[res][:len(reais_futuro)] # Garante mesmo tamanho
                     
-                    if len(reais) > 0 and len(preds) > 0:
-                        metricas = calculate_metrics(reais, preds)
+                    if len(reais_futuro) > 0 and len(preds_futuro) > 0:
+                        metricas = calculate_metrics(reais_futuro, preds_futuro)
+                        todas_metricas_erro[res] = metricas # Guarda para passar para o gráfico
+                        
                         print(f"Recurso: {res}")
                         print(f"  - MAD  (Erro Absoluto): {metricas['MAD']}")
                         print(f"  - MSD  (Erro Quadratico): {metricas['MSD']}")
                         print(f"  - MAPE (Erro Percentual): {metricas['MAPE']}%")
                         print("-" * 50)
 
+                if self.output_directory:
+                    base_dir = self.output_directory
+                else:
+                    base_dir = self.directory_path if is_replay_mode else os.path.dirname(self.filename)
+                
+                # chamada do utils 
+                save_metrics_to_txt(
+                    model_name=self.model_name,
+                    split_step=SPLIT_STEP,
+                    horizon=HORIZONTE_DE_PREVISAO,
+                    metrics_dict=todas_metricas_erro,
+                    base_dir=base_dir
+                )
+
                 # Gerar e Salvar o Gráfico
                 if self.save_plot and len(timestamps) > 0:
                     # Define qual diretório base enviar para o utilitário
-                    base_dir = self.directory_path if is_replay_mode else self.filename
+                    if self.output_directory:
+                        base_dir = self.output_directory
+                    else:
+                        base_dir = self.directory_path if is_replay_mode else self.filename
                     
                     # Chama a função externa para fazer o trabalho visual
                     generate_individual_plots(
@@ -516,8 +529,10 @@ class Framework:
                         history_pred=history_pred,
                         model_name=self.model_name,
                         base_path=base_dir,
-                        is_replay_mode=is_replay_mode
-                    )  
+                        is_replay_mode=is_replay_mode,
+                        split_step=SPLIT_STEP,      
+                        metricas_erro=todas_metricas_erro 
+                    )
 
     def __trigger_rejuvenation(self):
         for process in psutil.process_iter(attrs=["pid", "name"]):
@@ -528,9 +543,24 @@ class Framework:
                 break
 
 class FrameworkConfig:
-    def __init__(self):
-        with open("config.yaml", "r") as yml_file:
+    def __init__(self,
+        split_step_override=None,
+        horizonte_override=None,
+        output_dir_override=None
+        ):
+
+        with open("config.yaml", "r", encoding="utf-8") as yml_file:
             config = yaml.load(yml_file, Loader=yaml.FullLoader)
+
+        # Permite sobrescrever parâmetros via linha de comando, para automação com scripts
+        if split_step_override is not None:
+            config["general"]["split_step"] = split_step_override
+            
+        if horizonte_override is not None:
+            config["general"]["horizonte_de_previsao"] = horizonte_override
+            
+        if output_dir_override is not None:
+            config["general"]["output_directory"] = output_dir_override
 
         framework = Framework(
             **config["general"], **config["monitoring"], **config["real_time"]
