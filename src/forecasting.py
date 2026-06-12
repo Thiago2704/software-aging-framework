@@ -1,13 +1,12 @@
 import time
-
 import numpy as np
 import pandas as pd
 
-from src.models import HLSTM, MovingAverage, Model, SARIMAX, VARMA, ARIMAX, AdaptiveRandomForest, HoeffdingAdaptiveTreePerceptron
-from src.models import iSOUP, SNARIMAX_Tree
 from src.utils import split_sets, normalize
+from src.models.model_factory import ModelFactory  # Importar a fábrica
 
-
+# Classe de Forecasting que utiliza a ModelFactory para criar os modelos.
+# É responsável por treinar o modelo, fazer previsões e plotar os resultados. 
 class Forecasting:
     def __init__(
         self,
@@ -24,16 +23,17 @@ class Forecasting:
         if model_name in ["arf","hat_perceptron", "isoup", "sarimax", "varma", "arimax",
                           "snarimax_ht","snarimax_hat",
                           "snarimax_oxt", "snarimax_arf", "snarimax_amf"]:
-            if model_name in ["varma"]:
-                for res in self.resources:
-                    self.normalization_params[res] = (0.0, 1.0)
                     
             self.train_sequence = None
             self.test_sequence = None
             
-            # Inicializa o modelo imediatamente e encerra o __init__
-            self.model = self.__get_model(
-                model_name, path_to_save_weights, path_to_load_model
+            # Utilizar a Factory em vez do método interno
+            self.model = ModelFactory.create_model(
+                model_name=model_name,
+                resources=self.resources,
+                normalization_params=self.normalization_params,
+                path_to_save_weights=path_to_save_weights,
+                path_to_load_model=path_to_load_model
             )
             return
 
@@ -44,66 +44,14 @@ class Forecasting:
                 self.normalization_params[resource] = (s_min, s_max)
         self.train_sequence, self.test_sequence = split_sets(sequence, 0.8)
 
-        self.model = self.__get_model(
-            model_name, path_to_save_weights, path_to_load_model
+        # Utilizar a Factory novamente para os modelos offline
+        self.model = ModelFactory.create_model(
+            model_name=model_name,
+            resources=self.resources,
+            normalization_params=self.normalization_params,
+            path_to_save_weights=path_to_save_weights,
+            path_to_load_model=path_to_load_model
         )
-
-    def __get_model(
-        self,
-        model_name: str,
-        path_to_save_weights: str | None,
-        path_to_load_model: str | None,
-    ) -> Model:
-        match model_name:
-            case "ma":
-                return MovingAverage(normalization_params=self.normalization_params)
-            case "h_lstm":
-                model = HLSTM(
-                    n_features=len(self.resources),
-                    normalization_params=self.normalization_params,
-                    path_to_save_weights=path_to_save_weights,
-                )
-                if path_to_load_model:
-                    model.load(path_to_load_model)
-                return model
-            case "sarimax":
-                model = SARIMAX(
-                    normalization_params=self.normalization_params, 
-                    path_to_save_weights=path_to_save_weights
-                )
-                if path_to_load_model:
-                    model.load(path_to_load_model)
-                return model
-            case "varma": 
-                model = VARMA(
-                    normalization_params=self.normalization_params, 
-                    path_to_save_weights=path_to_save_weights
-                )
-                if path_to_load_model:
-                    model.load(path_to_load_model) 
-                return model
-            case "arimax":
-                model = ARIMAX(
-                    normalization_params=self.normalization_params, 
-                    path_to_save_weights=path_to_save_weights
-                )
-                if path_to_load_model:
-                    model.load(path_to_load_model)
-                return model
-            case "arf":
-                return AdaptiveRandomForest(resources=self.resources)
-            case "hat_perceptron":
-                return HoeffdingAdaptiveTreePerceptron(resources=self.resources)
-            case "isoup": 
-                return iSOUP(resources=self.resources)
-            case ("snarimax_hat" | "snarimax_ht" | 
-                  "snarimax_oxt" | "snarimax_arf" | "snarimax_amf"):
-                return SNARIMAX_Tree(
-                    resources=self.resources,
-                    tree_type=model_name
-                )
-            case _:
-                raise ValueError("Model not found")
 
     def train(self):
         start_time = time.time()
