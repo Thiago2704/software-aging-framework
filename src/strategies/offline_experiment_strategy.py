@@ -6,6 +6,24 @@ from src.utils import normalize, denormalize
 from src.strategies.execution_strategy import ExecutionStrategy
 
 class OfflineExperimentStrategy(ExecutionStrategy):
+    """
+    Estratégia de execução para inferência em tempo real utilizando modelos pré-treinados (Offline).
+
+    Esta classe é responsável por monitorar o sistema vivo e aplicar modelos de aprendizado 
+    em lote (batch learning, como Redes Neurais/LSTM) para prever anomalias.
+
+    O fluxo de operação ocorre nas seguintes etapas:
+    1. Inicialização/Setup: Acumula dados iniciais para um treino rápido ou carrega os 
+       pesos de um modelo previamente treinado a partir de um arquivo `.h5`.
+    2. Coleta Contínua: Em intervalos regulares, lê as últimas métricas gravadas pelo monitor.
+    3. Pré-processamento: Aplica normalização (Min-Max) e remodela (reshape) os dados 
+       na forma de janelas deslizantes requeridas pelo modelo.
+    4. Inferência e Mitigação: Realiza a previsão para os próximos N passos. Se alguma 
+       previsão ultrapassar os limites (thresholds) definidos, aciona o rejuvenescimento 
+       (reiniciando o processo alvo).
+    5. Exportação: Salva todas as previsões geradas num ficheiro CSV de log.
+    """
+
     def execute(self, context):
         context.monitor_process.start()
         time.sleep(1)

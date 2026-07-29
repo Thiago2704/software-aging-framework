@@ -1,6 +1,14 @@
 from abc import ABC, abstractmethod
 
 class OnlineModel(ABC):
+    """
+    Interface base (Contrato) para os modelos de aprendizado online (incremental).
+    
+    Os modelos que implementam esta classe atualizam seus pesos matemáticos a 
+    cada nova amostra de monitoramento coletada, permitindo adaptação em tempo 
+    real ao envelhecimento do software sem a necessidade de reter todo o histórico 
+    na memória.
+    """
     @abstractmethod
     def learn_one(self, features: dict, target: float):
         """

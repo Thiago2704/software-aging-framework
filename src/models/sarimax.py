@@ -8,7 +8,27 @@ from src.models.online_model import OnlineModel
 from river import linear_model 
 
 class SNARIMAX_Adapter(base.Regressor):
+    """
+    Adaptador (Wrapper) para o modelo SNARIMAX (Seasonal NARIMAX) da biblioteca River.
+
+    Converte a interface de série temporal (y, x) para o padrão de regressão comum (x, y) 
+    exigido pelo `RegressorChain`. Esta versão inclui hiperparâmetros sazonais, permitindo 
+    que o modelo aprenda ciclos repetitivos de consumo de recursos (como horários de pico 
+    diários ou tarefas agendadas).
+    """
     def __init__(self, p=1, d=1, q=1, sp=1, sd=0, sq=1, m=48):
+        """
+        Args:
+            p (int, opcional): Ordem Autorregressiva (AR). Passos normais no passado.
+            d (int, opcional): Grau de Diferenciação (I) não sazonal.
+            q (int, opcional): Ordem da Média Móvel (MA) não sazonal.
+            sp (int, opcional): Ordem Autorregressiva Sazonal.
+            sd (int, opcional): Grau de Diferenciação Sazonal.
+            sq (int, opcional): Ordem da Média Móvel Sazonal.
+            m (int, opcional): Período da Sazonalidade. Define quantos passos formam um ciclo 
+                               completo (ex: se o passo for 30min, m=48 representa 1 dia).
+        """
+
         self.p = p
         self.d = d
         self.q = q

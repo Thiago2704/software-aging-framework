@@ -8,8 +8,24 @@ from src.models.online_model import OnlineModel
 from river import linear_model 
 
 class SNARIMAX_Adapter(base.Regressor):
+    """
+    Adaptador (Wrapper) para inicialização do SNARIMAX na biblioteca River.
+
+    Além de converter a interface de série temporal (y, x) para o padrão de 
+    regressão comum (x, y) exigido pelo `RegressorChain`, esse adaptador injeta 
+    um otimizador SGD (Stochastic Gradient Descent) com uma taxa de aprendizado 
+    suave (0.01) no modelo linear base. Isso garante maior estabilidade na 
+    convergência dos pesos ao longo do tempo.
+    """
+
     # p=4 (olha 2h para trás em passos de 30min), d=0 (estabiliza), q=1 (corrige erro recente)
     def __init__(self, p=1, d=1, q=1):
+        """
+        Args:
+            p (int, opcional): Ordem da parte Autorregressiva (AR). Quantos passos no passado observar.
+            d (int, opcional): Grau de Diferenciação (I). Quantas vezes diferenciar para estabilizar a série.
+            q (int, opcional): Ordem da Média Móvel (MA). Tamanho da janela para correção de erros recentes.
+        """
         self.p = p
         self.d = d
         self.q = q
@@ -29,10 +45,15 @@ class SNARIMAX_Adapter(base.Regressor):
         )
         
     def learn_one(self, x, y):
+        """Ajusta a ordem dos parâmetros (y, x) exigida pelo SNARIMAX nativo."""
         self.model.learn_one(y=y, x=x)
         return self
         
     def predict_one(self, x):
+        """
+        Converte a chamada de predição unitária para o método `forecast` do SNARIMAX.
+        Retorna 0.0 em caso de instabilidade matemática interna.
+        """
         try:
             res = self.model.forecast(horizon=1, xs=[x] if x else None)
             return res[0]
@@ -40,6 +61,15 @@ class SNARIMAX_Adapter(base.Regressor):
             return 0.0
 
 class ARIMAX(OnlineModel):
+    """
+    Modelo de aprendizado online baseado em ARIMAX Multivariado (Regressor Chain).
+
+    Utiliza uma cadeia de regressão para capturar a 
+    causalidade entre diferentes métricas físicas do sistema (ex: a previsão 
+    da Memória ajuda a prever o Swap) e emprega uma escala de tempo logarítmica 
+    para estabilizar o treinamento em execuções de longa duração.
+    """
+
     def __init__(self, normalization_params: dict[str, tuple[float, float]] = None, path_to_save_weights: str | None = None):
         self.normalization_params = normalization_params if normalization_params else {}
         self.path_to_save_weights = path_to_save_weights
@@ -74,7 +104,13 @@ class ARIMAX(OnlineModel):
         )
 
     def learn_one(self, features: dict, targets: dict):
-        """Treina o modelo convertendo os dados para o 'mundo miniatura'."""
+        """
+        Processa uma única amostra e atualiza os pesos do modelo.
+
+        Aplica normalização estática (dividindo pelo teto físico) e converte o 
+        contador de passos em uma variável temporal logarítmica, permitindo que 
+        o modelo compreenda a passagem do tempo sem sofrer saturação numérica.
+        """
         self.step_count += 1
         
         # Normaliza usando o teto fixo (os valores vão variar naturalmente entre 0.0 e 1.0)

@@ -1,26 +1,41 @@
 general:  # General configurations
-    model: "h_lstm"
-    # if run_monitoring and run_in_real_time are False, must provide a path to model weights (can be null)
-    # if the path_to_load_weights is passed, the path_to_save_weights will be ignored
-    path_to_save_weights: null
-    resources_to_predict: ["CPU", "Mem"]
-    # if run_monitoring and run_in_real_time are False, must provide a path to a csv file
-    directory_path: "/home/gabrielvn/Faculdade/projetos/software-aging-framework/data/log_2023-09-12_18-07-45.csv"
-    run_monitoring: False
-    run_in_real_time: False
-    save_plot: True  # Only used if run_in_real_time is False
+    model: "arimax"
 
-monitoring:  # Only used if run_monitoring is True or run_in_real_time is True
-    monitoring_time_in_seconds: 180  # Only used if run_monitoring is True
-    monitoring_interval_in_seconds: 1
-    process_name: "code"
+    # lista de modelos disponíveis: 
+    # arimax, sarimax
+    # snarimax_hat, "snarimax_ht
+    # snarimax_arf, snarimax_amf, snarimax_oxt
 
-real_time:  # Only used if run_in_real_time is True
-    # if run_monitoring is True then the model_path will not be considered and a new model will be trained (can be null)
-    path_to_load_weights: "/home/gabriel/Repositories/software-aging-framework/data/real_monitoring/real_monitoring"
-    memory_threshold: 50  # in KB
-    cpu_threshold: 50  # in percentage
-    disk_threshold: 95  # in KB
+    # se run_monitoring e run_in_real_time forem False, deve fornecer um caminho para os pesos do modelo (pode ser null)
+    # se o path_to_load_weights for passado, o path_to_save_weights será ignorado
+    path_to_save_weights: null #"./weights"
+    resources_to_predict: ["CPU", "Mem", "Swap", "DiskSpace"]
+    # se run_monitoring e run_in_real_time forem False, deve fornecer um caminho para um arquivo csv
+    #directory_path: ./data
+    directory_path: "D:\\logs_v2\\ubuntu22_podman" # Caminho para os logs, em caso de execução em modo replay.
+    run_monitoring: True  
+    run_in_real_time: True # mudei de true para false
+    save_plot: True  # Usado apenas se run_in_real_time for False
+    normalization_log_path: null #"./data/log_2025-11-19_11-07-02.csv"
+
+    # variaveis para automatização de testes no modo replay
+    # valores arbitrários, serão sobrescritos no run_experiments.py
+    # para testes unitários, realizar python main.py
+    split_step: 48
+    horizonte_de_previsao: 48
+    output_directory: null
+
+monitoring:  # Usado apenas se run_monitoring for True ou run_in_real_time for True
+    monitoring_time_in_seconds: 180  # Usado apenas se run_monitoring for True
+    monitoring_interval_in_seconds: 1 #talvez aumentar para 60 ou 300
+    process_name: "code" #code
+
+real_time:  # Usado apenas se run_in_real_time for True
+    # se run_monitoring for True, o path_to_load_weights não será considerado e um novo modelo será treinado (pode ser null)
+    path_to_load_weights: null #"./weights/log_2025-11-19_11-07-02"
+    memory_threshold: 12000000.0 #750000.0  # in KB
+    cpu_threshold: 90  # in percentage
+    disk_threshold: 25000000.0  #-95- in KB
     number_of_predictions: 5
     start_command: "code"
     restart_command: null  # can be null (default restart will be used)

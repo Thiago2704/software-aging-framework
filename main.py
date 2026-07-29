@@ -1,11 +1,24 @@
 import argparse
 from src.framework import FrameworkConfig
 
-# Ponto de entrada.
-# Pode ser executado manualmente ou através de scripts de automação (run_experiments.py).
-# aceita argumentos via linha de comando (CLI) para injetar dinamicamente 
-# os cenários de teste (tamanho do histórico, horizonte futuro e local de salvamento).
-# os cenarios são definidos em run_experiments.py, que chama este main.py passando os parâmetros via CLI.
+"""
+Ponto de entrada principal do Software Aging Framework.
+
+Este script atua como a interface de linha de comando (CLI) para inicializar
+e orquestrar o framework. Ele delega a execução para o `FrameworkConfig`, 
+que lê as configurações padrão do arquivo `config.yaml`.
+
+Adicionalmente, este script permite a injeção (sobrescrita) dinâmica de 
+parâmetros-chave através do terminal. Isso facilita a automação de testes 
+e a criação de cenários de experimentação em lote (orquestrados por 
+scripts externos como o `run_experiments.py`).
+
+Uso básico (utiliza apenas o config.yaml):
+    python main.py
+
+Uso avançado (sobrescrevendo parâmetros via CLI):
+    python main.py --split_step 300 --horizonte 96 --output_dir ./resultados/exp1
+"""
 if __name__ == "__main__":
     # Configura o "escutador" de linha de comando
     parser = argparse.ArgumentParser(description="Laboratório de Envelhecimento de Software")
@@ -17,7 +30,9 @@ if __name__ == "__main__":
     # Lê o que foi digitado
     args = parser.parse_args()
 
-    # Chama a sua classe passando as variáveis (mesmo que sejam None)
+    # Instancia as configurações do Framework. 
+    # Caso um parâmetro não tenha sido passado via CLI, ele será None, 
+    # e o FrameworkConfig utilizará o valor padrão definido no config.yaml.
     FrameworkConfig(
         split_step_override=args.split_step,
         horizonte_override=args.horizonte,

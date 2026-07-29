@@ -5,6 +5,21 @@ from matplotlib import pyplot as plt
 
 
 def normalize(sequence: pd.DataFrame | np.ndarray) -> tuple[pd.DataFrame, float, float]:
+    """
+    Aplica a normalização Min-Max a uma sequência de dados.
+
+    Escala os valores para o intervalo [0, 1]. Valores ausentes (NaN) são 
+    substituídos por 0 após a normalização.
+
+    Args:
+        sequence (pd.DataFrame | np.ndarray): Os dados brutos a serem normalizados.
+
+    Returns:
+        tuple: Uma tupla contendo:
+            - A sequência normalizada.
+            - O valor mínimo (s_min) original (usado para desnormalização futura).
+            - O valor máximo (s_max) original.
+    """
     # Normalize data
     s_min = min(sequence)
     s_max = max(sequence)
@@ -17,6 +32,9 @@ def normalize(sequence: pd.DataFrame | np.ndarray) -> tuple[pd.DataFrame, float,
 def denormalize(
     sequence: pd.DataFrame | np.ndarray, s_min: float, s_max: float
 ) -> pd.DataFrame:
+    """
+    Reverte a normalização Min-Max, retornando os dados à escala original.
+    """
     sequence = sequence * (s_max - s_min) + s_min
 
     return sequence
@@ -25,6 +43,9 @@ def denormalize(
 def split_sets(
     sequence: pd.DataFrame, train_ratio: float
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Divide uma sequência cronológica em conjuntos de treino e teste.
+    """
     train_size = int(len(sequence) * train_ratio)
     train, test = sequence[:train_size], sequence[train_size:]
 
@@ -32,6 +53,12 @@ def split_sets(
 
 
 def split_sequence(sequence, n_steps):
+    """
+    Divide uma série temporal univariada em janelas deslizantes (supervisionadas).
+
+    Converte uma sequência linear em pares de entrada (x) e saída (y) esperada, 
+    permitindo que modelos de Machine Learning aprendam padrões temporais.
+    """
     x, y = [], []
     for i in range(len(sequence)):
         # Find the end of this pattern
@@ -48,6 +75,13 @@ def split_sequence(sequence, n_steps):
 
 
 def split_multivariate_sequences(sequences, n_steps):
+    """
+    Divide séries temporais multivariadas em janelas deslizantes.
+
+    Semelhante ao `split_sequence`, mas lida com múltiplas variáveis (features) 
+    simultaneamente, prevendo o próximo passo de todas as variáveis baseando-se 
+    no histórico (n_steps) de todas elas.
+    """
     x, y = list(), list()
     for i in range(len(sequences)):
         # Find the end of this pattern
@@ -187,7 +221,21 @@ def generate_individual_plots(resources: list, timestamps: list, history_real: d
 
 
 def calculate_metrics(real_values: list, pred_values: list) -> dict:
-    """Calcula MAD, MSD e MAPE para duas listas de valores."""
+    """
+    Compara a série temporal real com as projeções do modelo e retorna métricas de erro.
+
+    As métricas calculadas incluem:
+    - MAD (Mean Absolute Deviation): A média dos erros absolutos.
+    - MSD (Mean Squared Deviation): A média dos erros quadráticos, penalizando erros maiores.
+    - MAPE (Mean Absolute Percentage Error): O erro relativo percentual.
+
+    Args:
+        real_values (list): Valores reais observados (Ground Truth).
+        pred_values (list): Valores projetados pelo modelo preditivo.
+
+    Returns:
+        dict: Dicionário contendo as chaves 'MAD', 'MSD' e 'MAPE', com valores arredondados.
+    """
     y_true = np.array(real_values)
     y_pred = np.array(pred_values)
     
@@ -233,6 +281,14 @@ def save_metrics_to_txt(model_name: str, split_step: int, horizon: int, metrics_
     print(f"\n[+] Arquivo de métricas salvo com sucesso em: {caminho_txt}")
 
 class DataAggregator:
+    """
+    Agregador temporal (buffer) para métricas coletadas em tempo real.
+
+    Esta classe armazena leituras de curto prazo na memória e calcula a média 
+    quando o buffer atinge um limite estipulado (janela). É fundamental para 
+    suavizar ruídos de leituras instantâneas do sistema antes de alimentar os 
+    modelos preditivos.
+    """
     def __init__(self, resources: list[str], window_size: int):
         self.resources = resources
         self.window_size = window_size

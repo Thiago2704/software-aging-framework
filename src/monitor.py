@@ -7,7 +7,15 @@ import psutil
 
 
 class ResourceMonitor:
+    """
+    Monitor de recursos do sistema operacional focado em um processo específico.
+
+    Esta classe utiliza a biblioteca `psutil` para rastrear continuamente o uso de 
+    CPU, Memória (RSS) e Disco associados a um processo alvo, salvando as leituras 
+    em um arquivo CSV.
+    """
     class ProcessNotFound(Exception):
+        #Exceção levantada quando o processo alvo não é encontrado no sistema.
         pass
 
     def __init__(self, interval_in_seconds: int, process_name: str, filename: str):
@@ -17,6 +25,17 @@ class ResourceMonitor:
         self.process = None
 
     def monitor(self):
+        """
+        Inicia o loop contínuo de monitoramento.
+
+        Busca o processo pelo nome, cria o arquivo CSV de destino com os cabeçalhos 
+        e entra num laço infinito (while True) coletando e apensando as métricas a 
+        cada intervalo definido.
+
+        Raises:
+            ProcessNotFound: Se o processo especificado não estiver em execução no momento da chamada.
+        """
+
         self.process = self.__get_process()
         self.__create_file()
 
@@ -40,6 +59,16 @@ class ResourceMonitor:
             time.sleep(self.interval_in_seconds)
 
     def __get_process(self):
+        """
+        Busca a instância do processo no sistema operacional pelo nome.
+
+        Returns:
+            psutil.Process: Instância do processo alvo para coleta de métricas.
+
+        Raises:
+            ProcessNotFound: Se nenhum processo contendo o nome procurado for encontrado.
+        """
+
         for process in psutil.process_iter(attrs=["pid", "name"]):
             if self.process_name.lower() in process.info["name"].lower():
                 return psutil.Process(process.info["pid"])
@@ -51,9 +80,28 @@ class ResourceMonitor:
 
 
 class ResourceMonitorProcess(Process):
+    """
+    Processo isolado (Multiprocessing) para execução do ResourceMonitor.
+
+    Garante que o loop infinito de coleta de métricas não bloqueie a linha de 
+    execução principal (Main Thread) do framework. Qualquer exceção gerada 
+    durante o monitoramento é capturada e enviada de volta ao processo pai 
+    através de uma fila (Queue).
+    """
+
     def __init__(
         self, interval_in_seconds: int, process_name: str, filename: str, queue: Queue
     ):
+        """
+        Inicializa o processo paralelo de monitoramento.
+
+        Args:
+            interval_in_seconds (int): Intervalo de coleta das métricas.
+            process_name (str): Nome do processo do sistema operacional a ser monitorado.
+            filename (str): Caminho do arquivo de saída (CSV).
+            queue (Queue): Fila de comunicação inter-processos para envio de mensagens de erro.
+        """
+
         super(ResourceMonitorProcess, self).__init__()
         self.resource_monitor = ResourceMonitor(
             interval_in_seconds, process_name, filename
@@ -61,6 +109,10 @@ class ResourceMonitorProcess(Process):
         self.queue = queue
 
     def run(self):
+        """
+        Método invocado automaticamente ao chamar `.start()` na instância do processo.
+        """
+
         try:
             self.resource_monitor.monitor()
         except Exception as e:

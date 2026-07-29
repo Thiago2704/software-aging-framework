@@ -2,6 +2,35 @@ import pandas as pd
 import os
 
 def load_system_metrics(folder_path: str, resample_rule='30min'):
+    """
+    Lê, processa e unifica arquivos CSV de métricas de sistema de um diretório.
+
+    A função procura por logs padronizados de recursos (CPU, Memória, Disco) e 
+    logs de fragmentação de memória, converte os timestamps para um índice 
+    temporal unificado (DatetimeIndex) e combina todos os dados num único DataFrame. 
+    Valores ausentes são preenchidos por propagação (forward-fill) e zeros.
+
+    Se uma regra de reamostragem (resample) for fornecida, os dados serão agrupados 
+    no intervalo especificado, calculando a média ('mean') e o valor máximo ('max') 
+    para cada métrica.
+
+    Args:
+        folder_path (str): Caminho para a pasta contendo os arquivos CSV de log 
+                           (ex: 'cpu.csv', 'memory.csv', 'fragmentation_0.csv').
+        resample_rule (str, opcional): Regra de frequência temporal suportada pelo 
+                                       Pandas (ex: '30min', '1H'). O padrão é '30min'.
+                                       Se passado como None, a agregação temporal é ignorada.
+
+    Returns:
+        pd.DataFrame: DataFrame unificado e indexado cronologicamente contendo todas as 
+                      métricas processadas. Se houve reamostragem, as colunas terão 
+                      sufixos '_mean' e '_max' (ex: 'cpu_total_mean', 'mem_used_max').
+
+    Raises:
+        ValueError: Se nenhum arquivo CSV válido for encontrado e processado com sucesso 
+                    dentro da pasta especificada.
+    """
+
     print(f"Lendo logs de: {folder_path}")
     dfs = []
     

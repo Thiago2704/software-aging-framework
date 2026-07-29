@@ -8,6 +8,24 @@ from src.utils import DataAggregator, calculate_metrics, generate_individual_plo
 from src.data_loader import load_system_metrics
 
 class OnlineLearningStrategy(ExecutionStrategy):
+    """
+    Estratégia de execução para modelos preditivos de aprendizado online (incremental).
+
+    Esta classe implementa o ciclo contínuo de coleta de dados, treinamento e predição
+    para lidar com o envelhecimento de software (Software Aging). 
+    
+    A execução suporta dois modos de operação:
+    1. Modo Replay: Consome dados de logs históricos (CSV) para simular a passagem do tempo.
+    2. Modo Live: Monitora processos do sistema operacional em tempo real utilizando um DataAggregator.
+
+    O ciclo de vida da estratégia é dividido em três fases principais:
+    - Aprendizado (Warmup): O modelo consome dados reais passo a passo até atingir o `split_step`.
+    - Predição (No escuro): Ao atingir o `split_step`, o modelo projeta o comportamento futuro
+      dos recursos durante o `horizonte_de_previsao` estipulado.
+    - Observação e Validação: Continua coletando dados reais para comparar com a projeção feita,
+      gerando relatórios de métricas de erro (MAD, MSD, MAPE) e gráficos comparativos ao final.
+    """
+
     def execute(self, context):
         print(f"\nIniciando Aprendizado Online com {context.model_name}...")
         print("\n" + "="*40)

@@ -7,6 +7,17 @@ from src.models import (
 )
 
 class ModelFactory:
+    """
+    Fábrica central para instanciação de modelos preditivos.
+
+    Implementa o padrão de projeto Factory Method para centralizar e isolar 
+    a lógica de criação dos modelos.
+
+    Para adicionar um novo modelo ao framework:
+    1. Crie a classe do modelo herdando de `Model` ou `OnlineModel`.
+    2. Importe a classe neste arquivo.
+    3. Adicione um novo `case` no método `create_model`.
+    """
     @staticmethod
     def create_model(
         model_name: str,

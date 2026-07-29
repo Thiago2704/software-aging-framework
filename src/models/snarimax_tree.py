@@ -7,11 +7,22 @@ from river import multioutput
 from src.models.online_model import OnlineModel
 from river import base
 
-# classe wrapper para adaptar o SNARIMAX do River, que é um modelo de série temporal, 
-# para funcionar como um regressor normal dentro da cadeia de regressão multioutput. 
-# Ele encapsula o SNARIMAX e traduz as chamadas de aprendizado e previsão 
-# para o formato esperado pelo modelo de série temporal.
 class SNARIMAX_Wrapper:
+    """
+    Adaptador (Wrapper) para o modelo SNARIMAX da biblioteca River.
+
+    O SNARIMAX nativo do River possui uma interface voltada para séries temporais 
+    (esperando argumentos na ordem y, x e utilizando o método `forecast`). 
+    Este adaptador converte essa interface para o padrão de um regressor comum 
+    (ordem x, y e método `predict_one`), permitindo que o SNARIMAX seja embutido 
+    dentro de cadeias de regressão (RegressorChain).
+
+    Nota sobre RegressorChain:
+        É uma técnica de regressão multivariada onde a previsão de uma variável 
+        é utilizada como feature (dica) para prever a próxima variável na cadeia. 
+        Isso ajuda o modelo a aprender a correlação entre os recursos do sistema 
+        (ex: entender que picos de Memória podem influenciar o uso da CPU).
+    """
     def __init__(self, p, d, q, regressor):
         self.model = time_series.SNARIMAX(
             p=p, d=d, q=q, 
@@ -31,9 +42,14 @@ class SNARIMAX_Wrapper:
         except:
             return 0.0
         
-# wrapper para o AMF, para evitar que o modelo retorne None quando estiver em dúvida,
-# e retorne 0.0 em vez disso, para evitar conflito com o SNARIMAX que espera um valor numérico
 class AMF_Wrapper(base.Regressor):
+    """
+    Adaptador de segurança para o modelo Aggregated Mondrian Forest (AMF).
+
+    Florestas AMF no River podem retornar `None` durante as primeiras iterações 
+    se não tiverem confiança suficiente para prever. Este wrapper atua como um *fail-safe*, 
+    convertendo `None` em `0.0`.
+    """
     def __init__(self, regressor):
         self.regressor = regressor
 
@@ -47,7 +63,17 @@ class AMF_Wrapper(base.Regressor):
         return 0.0 if pred is None else pred
 
 class SNARIMAX_Tree(OnlineModel):
-    def __init__(self, resources: list[str], tree_type: str = 'HAT', p: int = 12, d: int = 1, q: int = 1):
+    """
+    Modelo híbrido de aprendizado online combinando SNARIMAX e Árvores/Florestas.
+
+    Esta classe orquestra a predição multivariada de consumo de recursos de software. 
+    Ela encadeia as previsões (RegressorChain) garantindo que a predição de um 
+    recurso (ex: Memória) ajude na predição do próximo (ex: CPU). Além disso, 
+    gerencia automaticamente a normalização interna dos dados utilizando limites 
+    físicos pré-estabelecidos e alimenta os modelos com um relógio logarítmico 
+    para simular o tempo contínuo de envelhecimento (aging).
+    """
+    def __init__(self, resources: list[str], tree_type: str = 'SNARIMAX_HAT', p: int = 12, d: int = 1, q: int = 1):
         self.resources = resources
         self.step_count = 0
         
@@ -103,10 +129,8 @@ class SNARIMAX_Tree(OnlineModel):
             case _: 
                 raise ValueError(f"Motor'{tree_type}' não suportado.")
 
-        # ====================================================================
-        # Encapsulamento Universal no SNARIMAX
-        # ====================================================================
-        # INJEÇÃO DO ADAPTADOR: passa o Wrapper em vez do SNARIMAX puro
+        # Injeta a árvore base escolhida dentro do SNARIMAX, que é envelopado 
+        # pelo Wrapper e finalmente colocado na RegressorChain
         wrapped_snarimax = SNARIMAX_Wrapper(
             p=p, d=d, q=q, 
             regressor=base_regressor
@@ -118,6 +142,17 @@ class SNARIMAX_Tree(OnlineModel):
         )
 
     def learn_one(self, features: dict, targets: dict):
+        """
+        Aprende um único passo utilizando normalização interna.
+
+        Converte os alvos absolutos para o intervalo [0, 1] com base nos 
+        limites de `max_values` e cria uma feature sintética de tempo (relógio 
+        logarítmico) para sinalizar a evolução contínua temporal ao modelo.
+
+        Args:
+            features (dict): Dicionário de features originais (ignorado, substituído pelo tempo interno).
+            targets (dict): Os valores reais e absolutos do sistema no passo atual.
+        """
         self.step_count += 1
         
         # Alvos normalizados
@@ -129,6 +164,15 @@ class SNARIMAX_Tree(OnlineModel):
         self.model.learn_one(x=x_norm, y=y_norm)
 
     def predict_one(self, features: dict) -> dict:
+        """
+        Gera a previsão para o próximo passo temporal.
+
+        Args:
+            features (dict): Features atuais do sistema (ignoradas a favor do relógio interno).
+
+        Returns:
+            dict: Os valores previstos desnormalizados e absolutos, com piso garantido em 0.0.
+        """
         x_norm = {'time_step': np.log1p(self.step_count + 1) / 10.0}
         
         pred_norm = self.model.predict_one(x=x_norm)
@@ -137,6 +181,25 @@ class SNARIMAX_Tree(OnlineModel):
         return {k: max(0.0, v * self.max_values[k]) for k, v in pred_norm.items()}
 
     def predict_until_failure(self, current_features: dict, thresholds: dict, max_horizon: int = 1000):
+        """
+        Simula ativamente o futuro gerando previsões recursivas até atingir o limite estipulado.
+
+        Clona o estado atual do modelo (deep copy) e entra num loop onde as previsões 
+        geradas são realimentadas no próprio clone como se fossem a realidade. O loop 
+        para quando a previsão de qualquer recurso cruza a linha vermelha (threshold) 
+        ou o horizonte máximo é alcançado.
+
+        Args:
+            current_features (dict): Estado base do sistema para iniciar a simulação.
+            thresholds (dict): Limites críticos para cada recurso (ex: {'Mem': 14000000}).
+            max_horizon (int, opcional): Limite máximo de passos futuros a serem simulados.
+
+        Returns:
+            tuple:
+                - steps_to_failure (int): O número de passos no futuro até a provável falha 
+                                          (-1 se o sistema não falhar dentro do max_horizon).
+                - predictions_path (list[dict]): A trajetória completa das previsões a cada passo.
+        """
         predictions_path = []
         steps_to_failure = -1
         

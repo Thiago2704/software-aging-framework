@@ -20,6 +20,17 @@ from src.strategies. offline_experiment_strategy import OfflineExperimentStrateg
 from src.strategies.experiment_strategy import ExperimentStrategy
 
 class Framework:
+
+    """
+    Motor central de orquestração do Software Aging Framework.
+
+    Atua como o Contexto no padrão de projeto Strategy. E responsável por 
+    inicializar os processos de monitoramento de recursos, instanciar os modelos 
+    preditivos (via Factory) e, com base nas configurações, selecionar e delegar 
+    a execução para a estratégia adequada (Online, Offline).
+    Também fornece métodos utilitários globais, como reiniciar processos e desenhar logs.
+    """
+
     def __init__(
         self,
         run_monitoring: bool,
@@ -188,6 +199,12 @@ class Framework:
                 break
 
 class FrameworkConfig:
+    """
+    Carregador e tradutor do arquivo YAML para o motor central.
+
+    Lê as configurações de `config.yaml` e permite a injeção via código de 
+    parâmetros chave.
+    """
     def __init__(self,
         split_step_override=None,
         horizonte_override=None,
