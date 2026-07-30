@@ -8,6 +8,7 @@ O **Software Aging Framework** é um ambiente de experimentação e monitorament
 ## 📂Estrutura do Repositório
 A arquitetura do projeto está dividida em módulos focados em dados, modelagem preditiva, estratégias de execução e visualização:
 
+```text
 software-aging-framework/
 ├── .gitignore
 ├── README.md
@@ -25,6 +26,7 @@ software-aging-framework/
     ├── utils.py                    # Funções utilitárias e auxiliares
     ├── models/                     # Implementações de Modelos 
     └── strategies/                 # Padrões de execução (Online e Offline)
+```
 
 ---
 
