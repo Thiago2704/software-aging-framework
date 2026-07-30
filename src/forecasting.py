@@ -49,7 +49,7 @@ class Forecasting:
         self.resources = resources
         self.normalization_params = {}
 
-        if model_name in ["arf","hat_perceptron", "isoup", "sarimax", "varma", "arimax",
+        if model_name in ["sarimax", "arimax",
                           "snarimax_ht","snarimax_hat",
                           "snarimax_oxt", "snarimax_arf", "snarimax_amf"]:
                     

@@ -4,8 +4,5 @@ from .model import Model
 from .sarimax import SARIMAX
 from .arimax import ARIMAX
 from .online_model import OnlineModel
-from .adaptive_random_forest import AdaptiveRandomForest
-from .hoeffding_adaptive_tree_perceptron import HoeffdingAdaptiveTreePerceptron
-from .isoup import iSOUP
 from .snarimax_tree import SNARIMAX_Tree
 from .model_factory import ModelFactory

@@ -1,9 +1,7 @@
 # src/models/model_factory.py
 
 from src.models import (
-    HLSTM, MovingAverage, SARIMAX, ARIMAX,
-    AdaptiveRandomForest, HoeffdingAdaptiveTreePerceptron, iSOUP,
-    SNARIMAX_Tree
+    HLSTM, MovingAverage, SARIMAX, ARIMAX, SNARIMAX_Tree
 )
 
 class ModelFactory:

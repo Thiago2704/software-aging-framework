@@ -82,7 +82,7 @@ class Framework:
         self.monitor_process: ResourceMonitorProcess | None = None
         self.error_queue = Queue()
         self.normalization_log_path = normalization_log_path
-        self.online_models = ["arf", "hat_perceptron", "isoup", "arimax", "sarimax", "varma",
+        self.online_models = ["arimax", "sarimax",
                               "snarimax_ht","snarimax_hat",
                               "snarimax_oxt", "snarimax_arf", "snarimax_amf"] # Lista de modelos que usam aprendizado online
         
