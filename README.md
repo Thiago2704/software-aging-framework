@@ -19,7 +19,7 @@ software-aging-framework/
 ├── run_experiments.py              # Script automatizado para rodar a bateria de testes
 └── src/                            # Código-fonte principal
     ├── __init__.py
-    ├── data_loader.py              # Responsável por carregar e pré-processar os dados(logs) em caso de modo replay.
+    ├── data_loader.py              # Responsável por carregar e pré-processar os logs no modo replay.
     ├── forecasting.py              # Módulo de lógica de previsão
     ├── framework.py                # Orquestrador principal do framework
     ├── monitor.py                  # Ferramenta para monitoramento do estado do sistema
@@ -75,10 +75,4 @@ O framework separa a lógica do modelo da forma como o experimento é conduzido,
    Para rodar a suíte completa:
    ```bash
    python run_experiments.py
-   ```
-
-4. Visualização:
-   Após a finalização, gere os gráficos de resultados com:
-   ```bash
-   python plot_real_time_experiments.py
    ```
