@@ -26,6 +26,7 @@ class Forecasting:
         path_to_save_weights: str | None,
         use_normalization: bool = True,
         path_to_load_model: str | None = None,
+        max_values: dict[str, float] | None = None,
     ):
         """
         Inicializa o gerenciador de previsões e instancia o modelo selecionado.
@@ -62,7 +63,8 @@ class Forecasting:
                 resources=self.resources,
                 normalization_params=self.normalization_params,
                 path_to_save_weights=path_to_save_weights,
-                path_to_load_model=path_to_load_model
+                path_to_load_model=path_to_load_model,
+                max_values=max_values
             )
             return
 
@@ -79,7 +81,8 @@ class Forecasting:
             resources=self.resources,
             normalization_params=self.normalization_params,
             path_to_save_weights=path_to_save_weights,
-            path_to_load_model=path_to_load_model
+            path_to_load_model=path_to_load_model,
+            max_values=max_values
         )
 
     def train(self):

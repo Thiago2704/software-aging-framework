@@ -6,6 +6,7 @@ import pandas as pd
 import psutil
 
 
+
 class ResourceMonitor:
     """
     Monitor de recursos do sistema operacional focado em um processo específico.
@@ -43,16 +44,14 @@ class ResourceMonitor:
             cpu_percent = self.process.cpu_percent()
             mem_info = self.process.memory_info()
             mem_usage = mem_info.rss / (1024**1)  # Memory usage in KB
-            # TODO: monitor the process disk usage
-            disk_usage = psutil.disk_usage("/").used / (
-                1024**1
-            )  # Disk usage in in KB
+            disk_usage = psutil.disk_usage("/").used / (1024**1)
+            swap_usage = psutil.swap_memory().used / (1024**1)
 
             timestamp = datetime.now()
-            data = (timestamp, cpu_percent, mem_usage, disk_usage)
+            data = (timestamp, cpu_percent, mem_usage, swap_usage, disk_usage)
 
             dataframe = pd.DataFrame(
-                [data], columns=["Timestamp", "CPU", "Mem", "Disk"]
+                [data], columns=["Timestamp", "CPU", "Mem", "Swap", "DiskSpace"]
             )
             dataframe.to_csv(self.filename, mode="a", index=False, header=False)
 
@@ -75,7 +74,9 @@ class ResourceMonitor:
         raise self.ProcessNotFound(f"Process '{self.process_name}' not found.")
 
     def __create_file(self):
-        dataframe = pd.DataFrame(columns=["Timestamp", "CPU", "Mem", "Disk"])
+        dataframe = pd.DataFrame(
+            columns=["Timestamp", "CPU", "Mem", "Swap", "DiskSpace"]
+        )
         dataframe.to_csv(self.filename, index=False)
 
 

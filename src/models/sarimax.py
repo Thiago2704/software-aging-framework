@@ -3,6 +3,7 @@ import copy
 from river import time_series
 from river import multioutput
 from river import base
+from src.resource_limits import get_default_limits
 from river import optim
 from src.models.online_model import OnlineModel
 from river import linear_model 
@@ -67,7 +68,7 @@ class SNARIMAX_Adapter(base.Regressor):
             return 0.0
 
 class SARIMAX(OnlineModel):
-    def __init__(self, normalization_params: dict[str, tuple[float, float]] = None, path_to_save_weights: str | None = None):
+    def __init__(self, normalization_params: dict[str, tuple[float, float]] = None, path_to_save_weights: str | None = None, max_values: dict[str, float] | None = None):
         self.normalization_params = normalization_params if normalization_params else {}
         self.path_to_save_weights = path_to_save_weights
         
@@ -85,12 +86,7 @@ class SARIMAX(OnlineModel):
             self.resources = base_order
 
         # Define os valores máximos para normalização (teto fixo para evitar saturação e manter a escala consistente)
-        self.max_values = {
-            'CPU': 100.0,               
-            'Mem': 16000000.0,          
-            'Swap': 8000000.0,          
-            'DiskSpace': 500000000.0    
-        }
+        self.max_values = {**get_default_limits(), **(max_values or {})}
         # Instancia o motor e a cadeia
         base_model = SNARIMAX_Adapter(p=6, d=1, q=1, m=48)
         self.model = multioutput.RegressorChain(
@@ -103,7 +99,7 @@ class SARIMAX(OnlineModel):
         self.step_count += 1
         
         # Normaliza usando o teto fixo (os valores vão variar naturalmente entre 0.0 e 1.0)
-        y_norm = {res: features.get(res, 0.0) / self.max_values[res] for res in self.resources}
+        y_norm = {res: targets.get(res, 0.0) / self.max_values[res] for res in self.resources}
         
         #escalando o tempo usando logaritmo para desacelerar o crescimento e evitar saturação rápida
         x_norm = {'time_step': np.log1p(self.step_count) / 10.0}

@@ -22,7 +22,8 @@ class ModelFactory:
         resources: list[str],
         normalization_params: dict,
         path_to_save_weights: str | None = None,
-        path_to_load_model: str | None = None
+        path_to_load_model: str | None = None,
+        max_values: dict[str, float] | None = None
     ):
         match model_name:
             case "ma":
@@ -39,12 +40,13 @@ class ModelFactory:
                 return model
             
             case "sarimax":
-                return SARIMAX(resources=resources)
+                return SARIMAX(resources=resources, max_values=max_values)
             
             case "arimax":
                 model = ARIMAX(
                     normalization_params=normalization_params,
-                    path_to_save_weights=path_to_save_weights
+                    path_to_save_weights=path_to_save_weights,
+                    max_values=max_values
                 )
                 if path_to_load_model:
                     model.load(path_to_load_model)
@@ -63,7 +65,8 @@ class ModelFactory:
                   "snarimax_oxt" | "snarimax_arf" | "snarimax_amf"):
                 return SNARIMAX_Tree(
                     resources=resources,
-                    tree_type=model_name
+                    tree_type=model_name,
+                    max_values=max_values
                 )
             
             case _:

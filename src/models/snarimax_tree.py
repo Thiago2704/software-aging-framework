@@ -6,6 +6,7 @@ from river import forest
 from river import multioutput
 from src.models.online_model import OnlineModel
 from river import base
+from src.resource_limits import get_default_limits
 
 class SNARIMAX_Wrapper:
     """
@@ -73,17 +74,12 @@ class SNARIMAX_Tree(OnlineModel):
     físicos pré-estabelecidos e alimenta os modelos com um relógio logarítmico 
     para simular o tempo contínuo de envelhecimento (aging).
     """
-    def __init__(self, resources: list[str], tree_type: str = 'SNARIMAX_HAT', p: int = 12, d: int = 1, q: int = 1):
+    def __init__(self, resources: list[str], tree_type: str = 'SNARIMAX_HAT', p: int = 12, d: int = 1, q: int = 1, max_values: dict[str, float] | None = None):
         self.resources = resources
         self.step_count = 0
         
         # Limites Físicos
-        self.max_values = {
-            'CPU': 100.0,
-            'Mem': 16000000.0,
-            'Swap': 8000000.0,
-            'DiskSpace': 500000000.0
-        }
+        self.max_values = {**get_default_limits(), **(max_values or {})}
 
         # Escolhe o modelo
         match tree_type.upper(): 
