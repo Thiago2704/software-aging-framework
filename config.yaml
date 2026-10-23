@@ -13,8 +13,14 @@ general:  # General configurations
     # se run_monitoring e run_in_real_time forem False, deve fornecer um caminho para um arquivo csv
     #directory_path: ./data
     directory_path: "D:\\logs_v2\\ubuntu22_podman" # Caminho para os logs, em caso de execução em modo replay.
-    run_monitoring: True  
-    run_in_real_time: True # mudei de true para false
+    run_monitoring: True   # Ativa a coleta de métricas do sistema operacional/processo ao vivo (via monitor.py)
+    # Define a estratégia de execução para modelos batch:
+    # True  -> Modo Online (treina e prevê em tempo real, ignorando os CSVs)
+    # False -> Modo Offline (simula a passagem do tempo consumindo os dados do directory_path)
+    run_in_real_time: True 
+    # True -> Modo Replay (simula a passagem do tempo consumindo os dados dos logs)
+    # False -> Modo Normal (executa o monitoramento em tempo real, sem consumir os dados dos logs)
+    is_replay_mode: True  
     save_plot: True  # Usado apenas se run_in_real_time for False
     normalization_log_path: null #"./data/log_2025-11-19_11-07-02.csv"
 
