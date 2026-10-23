@@ -7,6 +7,9 @@ import psutil
 
 
 
+EXOGENOUS_COLUMNS = ["DiskIO", "IOWait"]
+
+
 class ResourceMonitor:
     """
     Monitor de recursos do sistema operacional focado em um processo específico.
@@ -25,6 +28,23 @@ class ResourceMonitor:
         self.process_name = process_name
         self.process = None
 
+    @staticmethod
+    def __get_disk_io_rate(previous_counters, interval_in_seconds: int) -> float:
+        counters = psutil.disk_io_counters()
+        if counters is None or previous_counters is None:
+            return 0.0
+
+        operations = (
+            (counters.read_count - previous_counters.read_count)
+            + (counters.write_count - previous_counters.write_count)
+        )
+        return max(0.0, operations / max(interval_in_seconds, 1))
+
+    @staticmethod
+    def __get_iowait() -> float:
+        cpu_times = psutil.cpu_times_percent(interval=None)
+        return float(getattr(cpu_times, "iowait", 0.0))
+
     def monitor(self):
         """
         Inicia o loop contínuo de monitoramento.
@@ -39,6 +59,7 @@ class ResourceMonitor:
 
         self.process = self.__get_process()
         self.__create_file()
+        previous_disk_counters = psutil.disk_io_counters()
 
         while True:
             cpu_percent = self.process.cpu_percent()
@@ -46,12 +67,26 @@ class ResourceMonitor:
             mem_usage = mem_info.rss / (1024**1)  # Memory usage in KB
             disk_usage = psutil.disk_usage("/").used / (1024**1)
             swap_usage = psutil.swap_memory().used / (1024**1)
+            disk_io = self.__get_disk_io_rate(
+                previous_disk_counters, self.interval_in_seconds
+            )
+            previous_disk_counters = psutil.disk_io_counters()
+            iowait = self.__get_iowait()
 
             timestamp = datetime.now()
-            data = (timestamp, cpu_percent, mem_usage, swap_usage, disk_usage)
+            data = (
+                timestamp,
+                cpu_percent,
+                mem_usage,
+                swap_usage,
+                disk_usage,
+                disk_io,
+                iowait,
+            )
 
             dataframe = pd.DataFrame(
-                [data], columns=["Timestamp", "CPU", "Mem", "Swap", "DiskSpace"]
+                [data],
+                columns=["Timestamp", "CPU", "Mem", "Swap", "DiskSpace", *EXOGENOUS_COLUMNS],
             )
             dataframe.to_csv(self.filename, mode="a", index=False, header=False)
 
@@ -75,7 +110,7 @@ class ResourceMonitor:
 
     def __create_file(self):
         dataframe = pd.DataFrame(
-            columns=["Timestamp", "CPU", "Mem", "Swap", "DiskSpace"]
+            columns=["Timestamp", "CPU", "Mem", "Swap", "DiskSpace", *EXOGENOUS_COLUMNS]
         )
         dataframe.to_csv(self.filename, index=False)
 

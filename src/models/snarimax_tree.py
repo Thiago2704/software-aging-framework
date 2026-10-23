@@ -74,6 +74,8 @@ class SNARIMAX_Tree(OnlineModel):
     físicos pré-estabelecidos e alimenta os modelos com um relógio logarítmico 
     para simular o tempo contínuo de envelhecimento (aging).
     """
+    EXOGENOUS_FEATURES = ('Frag_1', 'DiskIO', 'IOWait')
+
     def __init__(self, resources: list[str], tree_type: str = 'SNARIMAX_HAT', p: int = 12, d: int = 1, q: int = 1, max_values: dict[str, float] | None = None):
         self.resources = resources
         self.step_count = 0
@@ -137,6 +139,14 @@ class SNARIMAX_Tree(OnlineModel):
             order=self.resources
         )
 
+    def _build_features(self, features: dict, step: int) -> dict:
+        x_norm = {
+            name: float(features.get(name, 0.0))
+            for name in self.EXOGENOUS_FEATURES
+        }
+        x_norm['time_step'] = np.log1p(step) / 10.0
+        return x_norm
+
     def learn_one(self, features: dict, targets: dict):
         """
         Aprende um único passo utilizando normalização interna.
@@ -146,7 +156,7 @@ class SNARIMAX_Tree(OnlineModel):
         logarítmico) para sinalizar a evolução contínua temporal ao modelo.
 
         Args:
-            features (dict): Dicionário de features originais (ignorado, substituído pelo tempo interno).
+            features (dict): Variáveis exógenas observadas no passo atual.
             targets (dict): Os valores reais e absolutos do sistema no passo atual.
         """
         self.step_count += 1
@@ -154,8 +164,7 @@ class SNARIMAX_Tree(OnlineModel):
         # Alvos normalizados
         y_norm = {res: targets.get(res, 0.0) / self.max_values[res] for res in self.resources}
         
-        # Relógio logarítmico
-        x_norm = {'time_step': np.log1p(self.step_count) / 10.0}
+        x_norm = self._build_features(features, self.step_count)
         
         self.model.learn_one(x=x_norm, y=y_norm)
 
@@ -164,12 +173,12 @@ class SNARIMAX_Tree(OnlineModel):
         Gera a previsão para o próximo passo temporal.
 
         Args:
-            features (dict): Features atuais do sistema (ignoradas a favor do relógio interno).
+            features (dict): Variáveis exógenas observadas no passo atual.
 
         Returns:
             dict: Os valores previstos desnormalizados e absolutos, com piso garantido em 0.0.
         """
-        x_norm = {'time_step': np.log1p(self.step_count + 1) / 10.0}
+        x_norm = self._build_features(features, self.step_count + 1)
         
         pred_norm = self.model.predict_one(x=x_norm)
         
@@ -204,7 +213,7 @@ class SNARIMAX_Tree(OnlineModel):
 
         for i in range(max_horizon):
             future_step += 1
-            x_future = {'time_step': np.log1p(future_step) / 10.0}
+            x_future = self._build_features(current_features, future_step)
             
             pred_norm = sim_model.predict_one(x=x_future)
             pred_real = {k: max(0.0, v * self.max_values[k]) for k, v in pred_norm.items()}

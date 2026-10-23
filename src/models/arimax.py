@@ -71,6 +71,8 @@ class ARIMAX(OnlineModel):
     para estabilizar o treinamento em execuções de longa duração.
     """
 
+    EXOGENOUS_FEATURES = ('Frag_1', 'DiskIO', 'IOWait')
+
     def __init__(self, normalization_params: dict[str, tuple[float, float]] = None, path_to_save_weights: str | None = None, max_values: dict[str, float] | None = None):
         self.normalization_params = normalization_params if normalization_params else {}
         self.path_to_save_weights = path_to_save_weights
@@ -99,6 +101,15 @@ class ARIMAX(OnlineModel):
             order=self.resources
         )
 
+    def _build_features(self, features: dict, step: int) -> dict:
+        """Monta as entradas do modelo com exógenas e o relógio temporal."""
+        x_norm = {
+            name: float(features.get(name, 0.0))
+            for name in self.EXOGENOUS_FEATURES
+        }
+        x_norm['time_step'] = np.log1p(step) / 10.0
+        return x_norm
+
     def learn_one(self, features: dict, targets: dict):
         """
         Processa uma única amostra e atualiza os pesos do modelo.
@@ -109,18 +120,17 @@ class ARIMAX(OnlineModel):
         """
         self.step_count += 1
         
-        # Normaliza usando o teto fixo (os valores vão variar naturalmente entre 0.0 e 1.0)
+        # O alvo é a observação atual, recebida em `targets`.
         y_norm = {res: targets.get(res, 0.0) / self.max_values[res] for res in self.resources}
         
-        #escalando o tempo usando logaritmo para desacelerar o crescimento e evitar saturação rápida
-        x_norm = {'time_step': np.log1p(self.step_count) / 10.0}
+        x_norm = self._build_features(features, self.step_count)
         
         # Treina
         self.model.learn_one(x=x_norm, y=y_norm)
 
     def predict_one(self, features: dict) -> dict:
         """Prevê e expande o valor de volta à escala real."""
-        x_norm = {'time_step': np.log1p(self.step_count + 1) / 10.0}
+        x_norm = self._build_features(features, self.step_count + 1)
         pred_norm = self.model.predict_one(x=x_norm)
         
         # Desnormaliza
@@ -138,7 +148,8 @@ class ARIMAX(OnlineModel):
         for i in range(max_horizon):
             # O relógio virtual continua a contar no futuro 
             future_step += 1
-            current_x_norm = {'time_step': np.log1p(future_step) / 10.0}
+            # Sem uma sequência futura de exógenas, mantém o último valor conhecido.
+            current_x_norm = self._build_features(current_features, future_step)
             
             # Prevê usando o modelo normalizado
             pred_norm = sim_model.predict_one(x=current_x_norm)

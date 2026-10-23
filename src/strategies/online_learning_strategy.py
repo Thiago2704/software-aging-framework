@@ -6,6 +6,7 @@ import psutil
 from src.strategies.execution_strategy import ExecutionStrategy
 from src.utils import DataAggregator, calculate_metrics, generate_individual_plots, save_metrics_to_txt
 from src.data_loader import load_system_metrics
+from src.monitor import EXOGENOUS_COLUMNS
 
 class OnlineLearningStrategy(ExecutionStrategy):
     """
@@ -26,6 +27,9 @@ class OnlineLearningStrategy(ExecutionStrategy):
       gerando relatórios de métricas de erro (MAD, MSD, MAPE) e gráficos comparativos ao final.
     """
 
+    def __init__(self, is_replay_mode: bool = False):
+        self.is_replay_mode = is_replay_mode
+
     def execute(self, context):
         print(f"\nIniciando Aprendizado Online com {context.model_name}...")
         print("\n" + "="*40)
@@ -33,13 +37,23 @@ class OnlineLearningStrategy(ExecutionStrategy):
         print(f"Dicionario Completo: {context.thresholds_by_resource}")
         print("="*40 + "\n")
 
-        is_replay_mode = os.path.isdir(context.directory_path) and os.path.exists(os.path.join(context.directory_path, "cpu.csv"))
+        is_replay_mode = self.is_replay_mode
     
         # Variáveis de Controle para o Aprendizado Online
         data_stream = None
         aggregator = None
 
         if is_replay_mode:
+            # Para verificar se o diretório existe e contém os arquivos CSV necessários
+            caminho_csv = os.path.join(context.directory_path, "cpu.csv")
+            
+            if not os.path.isdir(context.directory_path) or not os.path.exists(caminho_csv):
+                raise FileNotFoundError(
+                    f"\n[ERRO CRÍTICO] O modo Replay está ativado no config.yaml, "
+                    f"mas os arquivos CSV não foram encontrados no caminho: {context.directory_path}\n"
+                    f"Verifique se o diretório está correto e tente novamente."
+                )
+
             print(f" Modo leitura: Lendo logs historicos de {context.directory_path}")
             # Carrega dados já agregados (ex: Média Horária)
             full_df = load_system_metrics(context.directory_path)
@@ -54,7 +68,9 @@ class OnlineLearningStrategy(ExecutionStrategy):
                 time.sleep(0.5)
                 
             AGGREGATION_WINDOW = 5
-            aggregator = DataAggregator(context.resources, AGGREGATION_WINDOW)
+            aggregator = DataAggregator(
+                [*context.resources, *EXOGENOUS_COLUMNS], AGGREGATION_WINDOW
+            )
 
         last_observation = None
         learning_step = 0
@@ -106,7 +122,15 @@ class OnlineLearningStrategy(ExecutionStrategy):
                         df = pd.read_csv(context.filename)
                         if df.empty: continue
                         current_row = df.iloc[-1]
-                        raw_features = {res: current_row[res] for res in context.resources}
+                        monitored_columns = [
+                            *context.resources,
+                            *EXOGENOUS_COLUMNS,
+                        ]
+                        raw_features = {
+                            res: current_row[res]
+                            for res in monitored_columns
+                            if res in current_row
+                        }
                     except Exception:
                         continue
 
