@@ -10,7 +10,8 @@ import os
 from matplotlib import pyplot as plt
 
 from src.forecasting import Forecasting
-from src.monitor import ResourceMonitorProcess
+from src.monitor import ResourceMonitor, ResourceMonitorProcess
+from src.resource_limits import get_system_limits
 from src.utils import DataAggregator, normalize, denormalize, calculate_metrics, generate_individual_plots, save_metrics_to_txt
 from src.data_loader import load_system_metrics
 
@@ -51,6 +52,7 @@ class Framework:
         start_command: str,
         restart_command: str | None,
         normalization_log_path: str,
+        is_replay_mode: bool,
 
         # NOVAS VARIÁVEIS PARA AUTOMAÇÃO
         split_step: int = 300,
@@ -82,6 +84,7 @@ class Framework:
         self.monitor_process: ResourceMonitorProcess | None = None
         self.error_queue = Queue()
         self.normalization_log_path = normalization_log_path
+        self.is_replay_mode = is_replay_mode
         self.online_models = ["arimax", "sarimax",
                               "snarimax_ht","snarimax_hat",
                               "snarimax_oxt", "snarimax_arf", "snarimax_amf"] # Lista de modelos que usam aprendizado online
@@ -113,7 +116,11 @@ class Framework:
                 resources=self.resources,
                 path_to_save_weights=None,
                 use_normalization=False, 
-                path_to_load_model=None
+                path_to_load_model=None,
+                max_values=(
+                    get_system_limits()
+                    if not self.is_replay_mode else None
+                )
             )
         elif self.run_in_real_time or self.run_monitoring:
             self.path_to_save_weights = self.__create_weights_filename(
@@ -143,12 +150,10 @@ class Framework:
 
     def __choose_strategy(self):
         """Seleciona e retorna a classe de estratégia apropriada."""
-        if self.model_name in self.online_models:
-            return OnlineLearningStrategy()
-        elif self.run_in_real_time:
-            return OfflineExperimentStrategy()
+        if self.run_in_real_time:
+            return OnlineLearningStrategy(is_replay_mode=self.is_replay_mode)
         else:
-            return ExperimentStrategy()
+            return OfflineExperimentStrategy() 
  
     def run(self):
         """Delega a execução para a estratégia instanciada."""
